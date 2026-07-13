@@ -1,26 +1,190 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ---------------------------------------------------------------------------
+   KPVE design system — Black & Yellow
+   Tokens pulled from Figma (KPVE | UI Design)
+--------------------------------------------------------------------------- */
+@theme {
+  /* Surfaces */
+  --color-ink: #050505;
+  --color-ink-soft: #0b0b0b;
+  --color-surface: #101010;
+  --color-surface-2: #1a1a1a;
+  --color-surface-3: #1f1f1f;
+
+  /* Lines */
+  --color-line: #202020;
+  --color-line-2: #262626;
+  --color-line-3: #292929;
+
+  /* Brand gold */
+  --color-gold: #bd8b28;
+  --color-gold-bright: #e9c04b;
+  --color-gold-soft: #e1c07f;
+  --color-gold-cream: #fff1ca;
+
+  /* Text */
+  --color-muted: #8c8c8c;
+  --color-muted-2: #808080;
+  --color-muted-3: #b8b8b8;
+
+  /* Type */
+  --font-sans: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sora: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
+
+  /* Motion */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Keyframes */
+  --animate-marquee: marquee var(--marquee-duration, 45s) linear infinite;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-faq-in: faqIn 0.26s ease-out;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@keyframes faqIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - var(--marquee-gap, 1.5rem) / 2));
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* keep anchored section headings clear of the fixed navbar */
+section[id] {
+  scroll-margin-top: 96px;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-ink);
+  color: #ffffff;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Selection */
+::selection {
+  background: rgba(189, 139, 40, 0.35);
+  color: #fff;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #000;
+}
+::-webkit-scrollbar-thumb {
+  background: #1f1f1f;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2c2c2c;
+}
+
+/* ---------------------------------------------------------------------------
+   Utilities
+--------------------------------------------------------------------------- */
+@layer utilities {
+  /* Gold text gradient (headings) */
+  .text-gold-gradient {
+    background-image: linear-gradient(
+      165deg,
+      var(--color-gold-cream) 45%,
+      var(--color-gold-soft) 85%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Solid gold fill button */
+  .bg-gold-gradient {
+    background-image: linear-gradient(
+      158deg,
+      var(--color-gold-bright) 18%,
+      var(--color-gold) 82%
+    );
+  }
+
+  /* Glass surface — modest blur keeps the look without heavy compositing cost */
+  .glass {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Radial grid / vignette used behind sections */
+  .bg-grid {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+
+  .mask-fade-y {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 12%, #000 88%, transparent);
+  }
+
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  }
+
+  /* full-bleed: break out of any max-width container to the viewport edges */
+  .full-bleed {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+  }
+
+  /* dot texture that fills a whole card (border-box) — no dark fill, no wrapper */
+  .card-dots {
+    background-image: radial-gradient(
+      rgba(255, 255, 255, 0.05) 1px,
+      transparent 1.6px
+    );
+    background-size: 22px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  html {
+    scroll-behavior: auto;
+  }
 }
