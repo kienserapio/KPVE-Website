@@ -97,6 +97,8 @@ export type Project = {
   tags: string[];
   body: string;
   image: string;
+  /** case-study slug — when set, the card links to /case-study/<slug> */
+  caseStudy?: string;
 };
 
 export const PROJECTS: Project[] = [
@@ -105,6 +107,7 @@ export const PROJECTS: Project[] = [
     tags: ["Web Development", "Branding"],
     body: "A premium marketplace for collectors — real-time bidding, verified provenance, and a checkout experience engineered to build trust at every step.",
     image: "/projects/rare-gem.png",
+    caseStudy: "rare-gem",
   },
   {
     title: "Hikka Surf Point",
