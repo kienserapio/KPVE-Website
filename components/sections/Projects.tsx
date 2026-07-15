@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Reveal } from "@/components/ui/Reveal";
 import { SpotlightCard } from "@/components/ui/SpotlightCard";
@@ -7,7 +8,7 @@ import { Icon } from "@/components/ui/Icon";
 import { PROJECTS, type Project } from "@/lib/data";
 
 function ProjectCard({ project }: { project: Project }) {
-  return (
+  const card = (
     <SpotlightCard className="group/proj card-dots relative h-full overflow-hidden rounded-[20px] border border-line-2 bg-gradient-to-b from-surface-2/60 to-transparent p-6 transition-transform duration-300 hover:-translate-y-1.5 hover:border-gold/25 sm:p-7">
       {/* preview */}
       <div className="relative z-10 aspect-[16/11] overflow-hidden rounded-2xl border border-line-2 bg-ink-soft">
@@ -47,6 +48,20 @@ function ProjectCard({ project }: { project: Project }) {
       </div>
     </SpotlightCard>
   );
+
+  if (project.caseStudy) {
+    return (
+      <Link
+        href={`/case-study/${project.caseStudy}`}
+        aria-label={`${project.title} — view case study`}
+        className="block h-full rounded-[20px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/50"
+      >
+        {card}
+      </Link>
+    );
+  }
+
+  return card;
 }
 
 export function Projects() {
