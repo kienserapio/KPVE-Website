@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
+import { useRef, useEffect } from "react";
 import {
+  AnimatePresence,
   motion,
   useMotionValue,
   useSpring,
@@ -56,11 +57,20 @@ function DockItem({
 export function Navbar() {
   const mouseX = useMotionValue(Infinity);
   const [scrolled, setScrolled] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const { scrollY } = useScroll();
 
   useMotionValueEvent(scrollY, "change", (v) => {
     setScrolled(v > 40);
   });
+
+  // lock body scroll while the mobile drawer is open
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [menuOpen]);
 
   return (
     <motion.header
@@ -97,14 +107,97 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* CTA */}
+        {/* CTA — desktop only */}
         <Link
           href="#contact"
-          className="rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white"
+          className="hidden rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white md:inline-block"
         >
           Let&rsquo;s Talk!
         </Link>
+
+        {/* hamburger — mobile only */}
+        <button
+          type="button"
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((o) => !o)}
+          className="relative z-50 flex size-10 flex-col items-center justify-center gap-1.5 rounded-full border border-white/10 bg-white/5 md:hidden"
+        >
+          <motion.span
+            animate={menuOpen ? { rotate: 45, y: 6 } : { rotate: 0, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="block h-0.5 w-5 rounded-full bg-white"
+          />
+          <motion.span
+            animate={menuOpen ? { opacity: 0 } : { opacity: 1 }}
+            transition={{ duration: 0.25 }}
+            className="block h-0.5 w-5 rounded-full bg-white"
+          />
+          <motion.span
+            animate={menuOpen ? { rotate: -45, y: -6 } : { rotate: 0, y: 0 }}
+            transition={{ duration: 0.25 }}
+            className="block h-0.5 w-5 rounded-full bg-white"
+          />
+        </button>
       </nav>
+
+      {/* mobile side drawer */}
+      <AnimatePresence>
+        {menuOpen && (
+          <>
+            {/* backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              onClick={() => setMenuOpen(false)}
+              className="fixed inset-0 z-40 bg-ink/60 backdrop-blur-sm md:hidden"
+            />
+
+            {/* panel */}
+            <motion.aside
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 34 }}
+              className="fixed right-0 top-0 z-40 flex h-full w-72 max-w-[80%] flex-col gap-2 border-l border-white/10 bg-ink/95 px-6 pb-8 pt-24 backdrop-blur-md md:hidden"
+            >
+              {NAV_LINKS.map((link, i) => (
+                <motion.div
+                  key={link.label}
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.1 + i * 0.06, duration: 0.3 }}
+                >
+                  <a
+                    href={link.href}
+                    onClick={() => setMenuOpen(false)}
+                    className="block rounded-xl px-4 py-3 text-base font-medium text-muted-3 transition-colors duration-200 hover:bg-white/5 hover:text-white"
+                  >
+                    {link.label}
+                  </a>
+                </motion.div>
+              ))}
+
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 + NAV_LINKS.length * 0.06, duration: 0.3 }}
+                className="mt-4"
+              >
+                <Link
+                  href="#contact"
+                  onClick={() => setMenuOpen(false)}
+                  className="block rounded-full border border-white/10 bg-white/5 px-6 py-3 text-center text-sm font-medium text-muted-3 transition-all duration-300 hover:border-gold/40 hover:text-white"
+                >
+                  Let&rsquo;s Talk!
+                </Link>
+              </motion.div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
     </motion.header>
   );
 }
