@@ -16,7 +16,7 @@ export function Footer() {
         <div className="grid gap-12 border-b border-white/10 pb-12 md:grid-cols-[1.4fr_1fr_1fr] lg:grid-cols-[1.6fr_1fr_1fr_1fr]">
           {/* brand */}
           <div className="flex flex-col gap-5">
-            <Link href="#home" className="flex items-center gap-3">
+            <Link href="/#home" className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src="/logo.png" alt="KPVE" className="size-11 object-contain" />
               <span className="text-xl font-semibold tracking-tight text-white">
@@ -47,8 +47,8 @@ export function Footer() {
           <FooterColumn
             title="Company"
             links={[
-              { label: "About Us", href: "#about" },
-              { label: "Services", href: "#services" },
+              { label: "About Us", href: "/#about" },
+              { label: "Services", href: "/services" },
               { label: "Projects", href: "#projects" },
               { label: "FAQs", href: "#faq" },
             ]}

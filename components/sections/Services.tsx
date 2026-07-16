@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Reveal } from "@/components/ui/Reveal";
 import { SpotlightCard } from "@/components/ui/SpotlightCard";
@@ -27,14 +28,17 @@ function ServiceCard({ service }: { service: Service }) {
         <p className="font-sora text-[15px] leading-7 text-muted">
           {service.body}
         </p>
-        <span className="mt-auto inline-flex items-center gap-1.5 rounded-full border border-line-2 bg-surface-2 px-6 py-3 font-sora text-sm text-white transition-colors duration-300 group-hover/card:border-gold/40">
+        <Link
+          href="/services"
+          className="mt-auto inline-flex items-center gap-1.5 rounded-full border border-line-2 bg-surface-2 px-6 py-3 font-sora text-sm text-white transition-colors duration-300 group-hover/card:border-gold/40"
+        >
           Learn More
           <Icon
             src="/icons/arrow.svg"
             tone="white"
             className="size-4 transition-transform duration-300 group-hover/card:translate-x-0.5 group-hover/card:-translate-y-0.5"
           />
-        </span>
+        </Link>
       </div>
     </SpotlightCard>
   );
@@ -57,7 +61,7 @@ export function Services() {
               subtitle="We support organizations across a wide range of industries, giving us a unique insight into building successful businesses."
             />
             <Reveal delay={0.2} className="hidden md:block">
-              <Button href="#contact" variant="glass">
+              <Button href="/services" variant="glass">
                 Explore More
               </Button>
             </Reveal>

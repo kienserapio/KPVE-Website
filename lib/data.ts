@@ -1,9 +1,9 @@
 export type NavLink = { label: string; href: string };
 
 export const NAV_LINKS: NavLink[] = [
-  { label: "Home", href: "#home" },
-  { label: "About", href: "#about" },
-  { label: "Services", href: "#services" },
+  { label: "Home", href: "/#home" },
+  { label: "About", href: "/#about" },
+  { label: "Services", href: "/services" },
   { label: "Contact Us", href: "#contact" },
 ];
 
@@ -12,6 +12,16 @@ export const HERO_STATS = [
   { value: "3.5k+", label: "Satisfied Clients" },
   { value: "1.5k+", label: "Thriving Projects" },
 ] as const;
+
+/** Hero copy for the dedicated /services page. */
+export const SERVICES_HERO = {
+  titleLead: "Services Built to",
+  titleHighlight: "Scale with You",
+  subtitle:
+    "Seven premium practices, one senior team. Pick a starting point — we tailor every engagement to your business goals.",
+  cta: "Start A Project With Us",
+  ctaHref: "#contact",
+} as const;
 
 export type ProcessStep = {
   step: string;
@@ -228,9 +238,9 @@ export const FAQS: Faq[] = [
 ];
 
 export const FOOTER_LINKS: NavLink[] = [
-  { label: "Home", href: "#home" },
-  { label: "About Us", href: "#about" },
-  { label: "Services", href: "#services" },
+  { label: "Home", href: "/#home" },
+  { label: "About Us", href: "/#about" },
+  { label: "Services", href: "/services" },
   { label: "Contact", href: "#contact" },
 ];
 

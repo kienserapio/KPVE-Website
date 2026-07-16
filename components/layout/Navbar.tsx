@@ -88,7 +88,7 @@ export function Navbar() {
       >
         {/* logo */}
         <Link
-          href="#home"
+          href="/#home"
           className="flex items-center transition-transform duration-300 hover:scale-105"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
