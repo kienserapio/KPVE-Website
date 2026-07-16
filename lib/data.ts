@@ -55,6 +55,8 @@ export type Service = {
   title: string;
   body: string;
   icon: string;
+  /** URL slug for the dedicated /services/<slug> detail page */
+  slug: string;
 };
 
 export const SERVICES: Service[] = [
@@ -62,36 +64,43 @@ export const SERVICES: Service[] = [
     title: "Design",
     body: "When it comes to digital agency solutions, no one does it better than the pros at KPVE. Your brand needs a high-quality design that captures your story with an engaging call to action.",
     icon: "/icons/design.svg",
+    slug: "design",
   },
   {
     title: "Web Development",
     body: "We build fast, resilient, and scalable web platforms with modern stacks — engineered for performance, accessibility, and effortless maintenance as you grow.",
     icon: "/icons/web.svg",
+    slug: "web-development",
   },
   {
     title: "Hosting",
     body: "Secure, monitored, and always-on infrastructure. We handle deployment, uptime, and scaling so your product stays online through every traffic spike.",
     icon: "/icons/hosting.svg",
+    slug: "hosting",
   },
   {
     title: "Support",
     body: "A dedicated team on standby. From quick fixes to strategic roadmapping, we keep your product healthy long after launch day.",
     icon: "/icons/support.svg",
+    slug: "support",
   },
   {
     title: "Business",
     body: "Strategy, positioning, and go-to-market. We align product decisions with real business outcomes to unlock durable, compounding growth.",
     icon: "/icons/business.svg",
+    slug: "business",
   },
   {
     title: "Media",
     body: "Motion, photography, and content that moves people. We produce assets that make your brand impossible to scroll past.",
     icon: "/icons/media.svg",
+    slug: "media",
   },
   {
     title: "Social Media",
     body: "Always-on content and community management. We keep your brand present, consistent, and growing across every platform that matters.",
     icon: "/icons/social.svg",
+    slug: "social-media",
   },
 ];
 
@@ -250,3 +259,270 @@ export const SOCIAL_LINKS: NavLink[] = [
   { label: "LinkedIn", href: "#" },
   { label: "Instagram", href: "#" },
 ];
+
+/* ---------------------------------------------------------------------------
+   Service detail pages (/services/<slug>)
+   Data-driven so every service page reuses the same section components.
+--------------------------------------------------------------------------- */
+
+export type ServiceHero = {
+  /** big first line of the title */
+  titleLead: string;
+  /** gold accent rendered as a second big line (when there's no tagline) */
+  titleHighlight?: string;
+  /** optional smaller second line below the main title */
+  tagline?: string;
+  /** gold portion of the tagline */
+  taglineHighlight?: string;
+  subtitle: string;
+  primaryCta: string;
+  primaryHref: string;
+  secondaryCta: string;
+  secondaryHref: string;
+};
+
+export type ServiceBenefits = {
+  eyebrow: string;
+  title: string;
+  highlight?: string;
+  body: string;
+  cta: string;
+  ctaHref: string;
+  /** checklist of outcomes */
+  items: string[];
+};
+
+export type ServiceCapability = { title: string; body: string; icon: string };
+
+export type ServiceCapabilities = {
+  eyebrow: string;
+  title: string;
+  highlight?: string;
+  subtitle: string;
+  items: ServiceCapability[];
+};
+
+export type ServiceProcessStep = { num: string; title: string; body: string };
+
+export type ServiceProcess = {
+  eyebrow: string;
+  title: string;
+  highlight?: string;
+  subtitle: string;
+  steps: ServiceProcessStep[];
+};
+
+export type ServiceWhyChooseUs = {
+  eyebrow: string;
+  title: string;
+  highlight?: string;
+  body: string;
+};
+
+export type ServicePage = {
+  slug: string;
+  metaTitle: string;
+  metaDescription: string;
+  hero: ServiceHero;
+  benefits: ServiceBenefits;
+  capabilities: ServiceCapabilities;
+  process: ServiceProcess;
+  whyChooseUs: ServiceWhyChooseUs;
+};
+
+/** Process + trust bands are shared verbatim across every service page. */
+const SHARED_PROCESS: ServiceProcess = {
+  eyebrow: "How We Work",
+  title: "Clear Focused",
+  highlight: "Process",
+  subtitle: "Four phrases. No surprises.",
+  steps: [
+    {
+      num: "01",
+      title: "Discover",
+      body: "We start with deep listening — uncovering goals, audiences, and constraints to set a sharp direction.",
+    },
+    {
+      num: "02",
+      title: "Design",
+      body: "We translate strategy into focused, premium artifacts — built to scale with your brand.",
+    },
+    {
+      num: "03",
+      title: "Develop",
+      body: "Senior engineers ship clean, modern code with quality gates at every milestone.",
+    },
+    {
+      num: "04",
+      title: "Deliver",
+      body: "We launch carefully, measure outcomes, and stay on as long-term partners for iteration.",
+    },
+  ],
+};
+
+const SHARED_WHY_CHOOSE_US: ServiceWhyChooseUs = {
+  eyebrow: "Why Choose Us",
+  title: "A Senior Team",
+  highlight: "You Can Trust",
+  body: "We don't do junior-led teams or reseller pricing. You work with the people doing the actual work.",
+};
+
+export const SERVICE_PAGES: Record<string, ServicePage> = {
+  design: {
+    slug: "design",
+    metaTitle: "Design — KPVE",
+    metaDescription:
+      "Designing premium products, brand & UX. From identity systems to dashboard UI, our design practice combines strategic clarity with craft-led execution.",
+    hero: {
+      titleLead: "Designing Premium Products,",
+      titleHighlight: "Brand & UX",
+      subtitle:
+        "We craft high-quality graphic design that captures your brand voice and accelerates business outcomes.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "#contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Design",
+      body: "From identity systems to dashboard UI, our design practice combines strategic clarity with craft-led execution. Every pixel earns its place.",
+      cta: "Learn More",
+      ctaHref: "#contact",
+      items: [
+        "Distinctive brand systems that scale across products and channels",
+        "Conversion-focused interfaces grounded in research and data",
+        "Reusable design systems that accelerate engineering velocity",
+        "Iterative testing to validate decisions before they ship",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete design practice — strategy through delivery.",
+      items: [
+        {
+          title: "Brand Identity",
+          body: "Logos, marks, typography systems, and visual languages built to last.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Design Systems",
+          body: "Tokenized, component-driven libraries that ship faster across teams.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Product Design",
+          body: "End-to-end UX — research, flows, prototypes, and pixel-perfect UI.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "UI Engineering",
+          body: "Polished interactions and motion that make products feel alive.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Marketing Design",
+          body: "Landing pages, ads, decks, and assets that convert.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Conversion Optimization",
+          body: "Data-led iteration loops to lift activation, retention and revenue.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  "web-development": {
+    slug: "web-development",
+    metaTitle: "Web Development — KPVE",
+    metaDescription:
+      "Modern web platforms built to scale. We build fast, secure, and scalable digital solutions tailored to your business needs.",
+    hero: {
+      titleLead: "Web Development",
+      tagline: "Modern Web Platforms ",
+      taglineHighlight: "Built to Scale",
+      subtitle:
+        "We build fast, secure, and scalable digital solutions tailored to your business needs.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "#contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Web Development",
+      body: "Our engineering team delivers production-grade web platforms — from marketing sites to complex SaaS — with senior craftsmanship and obsessive attention to performance.",
+      cta: "Learn More",
+      ctaHref: "#contact",
+      items: [
+        "Enterprise-grade architectures built for growth from day one",
+        "Performance budgets that keep your site lightning-fast",
+        "SEO-ready, accessible, and resilient to traffic spikes",
+        "CI/CD pipelines and automated testing for confident shipping",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete design practice — strategy through delivery.",
+      items: [
+        {
+          title: "Marketing Sites",
+          body: "Conversion-focused websites with CMS workflows your team will love.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "SaaS Platforms",
+          body: "Multi-tenant applications with auth, billing, and analytics out of the box.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Mobile-First",
+          body: "Pixel-perfect responsive experiences across every device.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "SEO & Performance",
+          body: "Core Web Vitals, structured data, and search-ready architecture.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Headless CMS",
+          body: "Composable content stacks with editorial workflows.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "AI Integrations",
+          body: "LLM-powered features wired into your product surfaces.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Edge & Delivery",
+          body: "Globally distributed apps with sub-50ms response times.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Secure by Default",
+          body: "OWASP-aligned best practices baked into every build.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+};
+
+/** True when a service slug has a dedicated detail page. */
+export function hasServicePage(slug: string): boolean {
+  return slug in SERVICE_PAGES;
+}

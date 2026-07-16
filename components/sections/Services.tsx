@@ -4,9 +4,18 @@ import { Reveal } from "@/components/ui/Reveal";
 import { SpotlightCard } from "@/components/ui/SpotlightCard";
 import { Button } from "@/components/ui/Button";
 import { Icon } from "@/components/ui/Icon";
-import { SERVICES, SERVICES_CTA, type Service } from "@/lib/data";
+import {
+  SERVICES,
+  SERVICES_CTA,
+  hasServicePage,
+  type Service,
+} from "@/lib/data";
 
 function ServiceCard({ service }: { service: Service }) {
+  // link to the dedicated detail page when one exists, else the services index
+  const href = hasServicePage(service.slug)
+    ? `/services/${service.slug}`
+    : "/services";
   return (
     <SpotlightCard
       radius={420}
@@ -29,7 +38,7 @@ function ServiceCard({ service }: { service: Service }) {
           {service.body}
         </p>
         <Link
-          href="/services"
+          href={href}
           className="mt-auto inline-flex items-center gap-1.5 rounded-full border border-line-2 bg-surface-2 px-6 py-3 font-sora text-sm text-white transition-colors duration-300 group-hover/card:border-gold/40"
         >
           Learn More
