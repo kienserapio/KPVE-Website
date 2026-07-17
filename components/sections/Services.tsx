@@ -96,7 +96,7 @@ export function Services() {
                   <p className="font-sora text-base text-white">
                     {SERVICES_CTA.note}
                   </p>
-                  <Button href="#contact" variant="gold" icon>
+                  <Button href="/contact" variant="gold" icon>
                     {SERVICES_CTA.cta}
                   </Button>
                 </div>

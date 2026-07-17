@@ -77,7 +77,7 @@ export function Projects() {
             subtitle="Explore our most recent projects where thoughtful design, robust development, and strategic thinking come together to create real impact."
           />
           <Reveal delay={0.2} className="hidden md:block">
-            <Button href="#contact" variant="glass">
+            <Button href="/contact" variant="glass">
               Explore More
             </Button>
           </Reveal>
@@ -92,7 +92,7 @@ export function Projects() {
         </div>
 
         <Reveal delay={0.1} className="mt-12 flex justify-center">
-          <Button href="#contact" variant="ghost" icon>
+          <Button href="/contact" variant="ghost" icon>
             View All Projects
           </Button>
         </Reveal>

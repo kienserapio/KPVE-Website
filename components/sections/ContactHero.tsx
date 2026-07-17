@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { motion, type Variants } from "framer-motion";
 import { Button } from "@/components/ui/Button";
-import { HERO_STATS } from "@/lib/data";
+import { HERO_STATS, CONTACT_HERO } from "@/lib/data";
 
 const container: Variants = {
   hidden: {},
@@ -19,11 +19,16 @@ const item: Variants = {
   },
 };
 
-export function Hero() {
+/**
+ * Hero for the dedicated /contact page. Shares the homepage Hero's visual
+ * treatment (background video, gradient overlays, 3-up stats card) but carries
+ * contact-specific copy and a single primary CTA that scrolls to the form.
+ */
+export function ContactHero() {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // pause the background video whenever the hero scrolls off-screen so it
-  // stops decoding/compositing and doesn't tax paints elsewhere on the page
+  // pause the background video while the hero is off-screen so it stops
+  // decoding/compositing and doesn't tax paints elsewhere on the page
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -58,11 +63,8 @@ export function Hero() {
 
       {/* ---- gradient overlays ---- */}
       <div className="pointer-events-none absolute inset-0 -z-10">
-        {/* subtle primary-yellow glow fading from the top */}
         <div className="absolute inset-x-0 top-0 h-[45vh] bg-gradient-to-b from-gold/20 via-gold/5 to-transparent" />
-        {/* black fade at the bottom into the page */}
         <div className="absolute inset-x-0 bottom-0 h-[55vh] bg-gradient-to-t from-ink via-ink/85 to-transparent" />
-        {/* faint grid texture */}
         <div className="absolute inset-0 bg-grid opacity-30 mask-fade-y" />
       </div>
 
@@ -79,7 +81,7 @@ export function Hero() {
               variants={item}
               className="mb-6 text-sm font-medium tracking-[0.25em] text-muted-3"
             >
-              EST. 2012
+              GET IN TOUCH
             </motion.p>
 
             <motion.h1
@@ -87,10 +89,10 @@ export function Hero() {
               className="text-[clamp(2.1rem,4.6vw,3.9rem)] font-normal leading-[1.08] tracking-tight text-white"
             >
               <span className="block whitespace-normal sm:whitespace-nowrap">
-                Kappatos Productions
+                {CONTACT_HERO.titleLead}
               </span>
               <span className="block whitespace-normal text-gold-gradient sm:whitespace-nowrap">
-                and Venture Enterprises
+                {CONTACT_HERO.titleHighlight}
               </span>
             </motion.h1>
 
@@ -98,20 +100,15 @@ export function Hero() {
               variants={item}
               className="mt-7 max-w-xl text-lg leading-8 text-muted-3"
             >
-              We partner with forward-thinking businesses to design, develop, and
-              scale solutions that drive sustainable growth — combining
-              creativity, technology, and strategic insight.
+              {CONTACT_HERO.subtitle}
             </motion.p>
 
             <motion.div
               variants={item}
               className="mt-9 flex flex-wrap items-center gap-3"
             >
-              <Button href="#projects" variant="glass">
-                Explore Our Projects
-              </Button>
-              <Button href="/contact" variant="gold" icon>
-                Get In Touch
+              <Button href={CONTACT_HERO.ctaHref} variant="gold" icon>
+                {CONTACT_HERO.cta}
               </Button>
             </motion.div>
           </div>

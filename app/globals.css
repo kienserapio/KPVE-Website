@@ -39,6 +39,24 @@
   --animate-marquee: marquee var(--marquee-duration, 45s) linear infinite;
   --animate-float: float 7s ease-in-out infinite;
   --animate-faq-in: faqIn 0.26s ease-out;
+  --animate-blink: blink 2.4s ease-in-out infinite;
+  --animate-dashflow: dashFlow 3.2s linear infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes dashFlow {
+  to {
+    stroke-dashoffset: -28;
+  }
 }
 
 @keyframes faqIn {

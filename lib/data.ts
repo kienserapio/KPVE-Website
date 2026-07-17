@@ -4,7 +4,7 @@ export const NAV_LINKS: NavLink[] = [
   { label: "Home", href: "/#home" },
   { label: "About", href: "/#about" },
   { label: "Services", href: "/services" },
-  { label: "Contact Us", href: "#contact" },
+  { label: "Contact Us", href: "/contact" },
 ];
 
 export const HERO_STATS = [
@@ -20,7 +20,67 @@ export const SERVICES_HERO = {
   subtitle:
     "Seven premium practices, one senior team. Pick a starting point — we tailor every engagement to your business goals.",
   cta: "Start A Project With Us",
+  ctaHref: "/contact",
+} as const;
+
+/* ---------------------------------------------------------------------------
+   Contact page (/contact)
+--------------------------------------------------------------------------- */
+
+/** Hero copy for the dedicated /contact page. */
+export const CONTACT_HERO = {
+  titleLead: "Let's",
+  titleHighlight: "Talk.",
+  subtitle:
+    "We typically reply within 24 hours. Tell us about your business and what you're trying to achieve.",
+  cta: "Send Us A Message",
+  /** in-page scroll to the contact form (Contact section renders id="contact") */
   ctaHref: "#contact",
+} as const;
+
+export type ContactChannel = {
+  label: string;
+  value: string;
+  icon: string;
+  /** clickable target (mailto:/tel:) — null renders a plain, static value */
+  href: string | null;
+};
+
+export const CONTACT_INFO: ContactChannel[] = [
+  {
+    label: "Email",
+    value: "info@kappatos.com",
+    icon: "/icons/mail.svg",
+    href: "mailto:info@kappatos.com",
+  },
+  {
+    label: "Phone",
+    value: "+1 (555) 010-2024",
+    icon: "/icons/phone.svg",
+    href: "tel:+15550102024",
+  },
+  {
+    label: "Location",
+    value: "Remote · Worldwide",
+    icon: "/icons/location.svg",
+    href: null,
+  },
+  {
+    label: "Hours",
+    value: "Mon–Fri · 9am–7pm",
+    icon: "/icons/clock.svg",
+    href: null,
+  },
+];
+
+/** Global-presence section — one large world-map card with live pins. */
+export const GLOBAL_PRESENCE = {
+  eyebrow: "Find Us",
+  title: "Remote-first, Globally",
+  highlight: "Available",
+  subtitle:
+    "Our team operates across timezones — meeting you where you work.",
+  caption: "Remote-first · Worldwide presence",
 } as const;
 
 export type ProcessStep = {
@@ -250,7 +310,7 @@ export const FOOTER_LINKS: NavLink[] = [
   { label: "Home", href: "/#home" },
   { label: "About Us", href: "/#about" },
   { label: "Services", href: "/services" },
-  { label: "Contact", href: "#contact" },
+  { label: "Contact", href: "/contact" },
 ];
 
 export const SOCIAL_LINKS: NavLink[] = [
@@ -379,7 +439,7 @@ export const SERVICE_PAGES: Record<string, ServicePage> = {
       subtitle:
         "We craft high-quality graphic design that captures your brand voice and accelerates business outcomes.",
       primaryCta: "Start A Project With Us",
-      primaryHref: "#contact",
+      primaryHref: "/contact",
       secondaryCta: "Explore Our Services",
       secondaryHref: "/services",
     },
@@ -389,7 +449,7 @@ export const SERVICE_PAGES: Record<string, ServicePage> = {
       highlight: "Design",
       body: "From identity systems to dashboard UI, our design practice combines strategic clarity with craft-led execution. Every pixel earns its place.",
       cta: "Learn More",
-      ctaHref: "#contact",
+      ctaHref: "/contact",
       items: [
         "Distinctive brand systems that scale across products and channels",
         "Conversion-focused interfaces grounded in research and data",
@@ -451,7 +511,7 @@ export const SERVICE_PAGES: Record<string, ServicePage> = {
       subtitle:
         "We build fast, secure, and scalable digital solutions tailored to your business needs.",
       primaryCta: "Start A Project With Us",
-      primaryHref: "#contact",
+      primaryHref: "/contact",
       secondaryCta: "Explore Our Services",
       secondaryHref: "/services",
     },
@@ -461,7 +521,7 @@ export const SERVICE_PAGES: Record<string, ServicePage> = {
       highlight: "Web Development",
       body: "Our engineering team delivers production-grade web platforms — from marketing sites to complex SaaS — with senior craftsmanship and obsessive attention to performance.",
       cta: "Learn More",
-      ctaHref: "#contact",
+      ctaHref: "/contact",
       items: [
         "Enterprise-grade architectures built for growth from day one",
         "Performance budgets that keep your site lightning-fast",

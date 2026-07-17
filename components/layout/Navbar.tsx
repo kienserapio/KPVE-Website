@@ -109,7 +109,7 @@ export function Navbar() {
 
         {/* CTA — desktop only */}
         <Link
-          href="#contact"
+          href="/contact"
           className="hidden rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white md:inline-block"
         >
           Let&rsquo;s Talk!
@@ -187,7 +187,7 @@ export function Navbar() {
                 className="mt-4"
               >
                 <Link
-                  href="#contact"
+                  href="/contact"
                   onClick={() => setMenuOpen(false)}
                   className="block rounded-full border border-white/10 bg-white/5 px-6 py-3 text-center text-sm font-medium text-muted-3 transition-all duration-300 hover:border-gold/40 hover:text-white"
                 >
