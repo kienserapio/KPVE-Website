@@ -107,13 +107,14 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* CTA — desktop only */}
-        <Link
-          href="/contact"
+        {/* CTA — desktop only. Scrolls to the contact form on the current page
+            (every page carrying the Navbar renders the #contact section). */}
+        <a
+          href="#contact"
           className="hidden rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white md:inline-block"
         >
           Let&rsquo;s Talk!
-        </Link>
+        </a>
 
         {/* hamburger — mobile only */}
         <button
@@ -186,13 +187,23 @@ export function Navbar() {
                 transition={{ delay: 0.1 + NAV_LINKS.length * 0.06, duration: 0.3 }}
                 className="mt-4"
               >
-                <Link
-                  href="/contact"
-                  onClick={() => setMenuOpen(false)}
+                <a
+                  href="#contact"
+                  onClick={(e) => {
+                    // close first — the drawer locks body scroll, so a raw hash
+                    // jump would be swallowed while it's still open
+                    e.preventDefault();
+                    setMenuOpen(false);
+                    setTimeout(() => {
+                      document
+                        .getElementById("contact")
+                        ?.scrollIntoView({ behavior: "smooth" });
+                    }, 60);
+                  }}
                   className="block rounded-full border border-white/10 bg-white/5 px-6 py-3 text-center text-sm font-medium text-muted-3 transition-all duration-300 hover:border-gold/40 hover:text-white"
                 >
                   Let&rsquo;s Talk!
-                </Link>
+                </a>
               </motion.div>
             </motion.aside>
           </>
