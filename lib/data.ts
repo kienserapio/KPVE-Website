@@ -2,7 +2,7 @@ export type NavLink = { label: string; href: string };
 
 export const NAV_LINKS: NavLink[] = [
   { label: "Home", href: "/#home" },
-  { label: "About", href: "/#about" },
+  { label: "About", href: "/about" },
   { label: "Services", href: "/services" },
   { label: "Contact Us", href: "/contact" },
 ];
@@ -81,6 +81,188 @@ export const GLOBAL_PRESENCE = {
   subtitle:
     "Our team operates across timezones — meeting you where you work.",
   caption: "Remote-first · Worldwide presence",
+} as const;
+
+/* ---------------------------------------------------------------------------
+   About page (/about)
+--------------------------------------------------------------------------- */
+
+/** Hero copy for the dedicated /about page. */
+export const ABOUT_HERO = {
+  titleLead: "Helping Ambitious Teams Ship",
+  titleHighlight: "Premium Digital Products",
+  subtitle:
+    "Kappatos Productions and Venture Enterprises is a senior, remote-first agency founded in 2012. We partner with founders and operators who care deeply about craft.",
+  primaryCta: "Start A Project With Us",
+  primaryHref: "/contact",
+  secondaryCta: "Explore Our Services",
+  secondaryHref: "/services",
+} as const;
+
+/** Founder story — "The Beginning". */
+export const ABOUT_FOUNDER = {
+  eyebrow: "The Beginning",
+  title: "Started KPVE",
+  since: "Est. 2012",
+  image: "/about/founder.png",
+  name: "Dimitrios Kappatos",
+  role: "Founder & CEO",
+  paragraphs: [
+    "Dimitrios started KPVE in 2012 at the age of 17, during his final months of school. He understood that whatever path he took in life, the digital space would always be crucial.",
+    "Over a decade later, we find ourselves in a world where technology has reshaped the marketplace and made it easier for businesses and consumers to transact. Dimitrios works personally with an array of medium to large enterprises, and continues to be the backbone of our company.",
+  ],
+} as const;
+
+export type Milestone = { year: string; title: string; body: string };
+
+/** Journey timeline — a section the original design didn't have. */
+export const ABOUT_JOURNEY: {
+  eyebrow: string;
+  title: string;
+  highlight: string;
+  subtitle: string;
+  milestones: Milestone[];
+} = {
+  eyebrow: "Our Journey",
+  title: "A Decade of",
+  highlight: "Compounding Craft",
+  subtitle:
+    "From a one-person studio to a global senior team — every year built deliberately.",
+  milestones: [
+    {
+      year: "2012",
+      title: "The first line of code",
+      body: "Dimitrios founds KPVE at 17, betting his future on the digital space.",
+    },
+    {
+      year: "2016",
+      title: "From solo to studio",
+      body: "First enterprise clients arrive; the team grows around a craft-first culture.",
+    },
+    {
+      year: "2020",
+      title: "Remote-first, globally",
+      body: "We go fully distributed — designers, engineers, and operators across timezones.",
+    },
+    {
+      year: "Today",
+      title: "A senior partner at scale",
+      body: "Trusted by medium-to-large enterprises to design, build, and grow what matters.",
+    },
+  ],
+};
+
+export type EthosTier = {
+  key: string;
+  label: string;
+  body: string;
+  icon: string;
+};
+
+/** Our Story / Mission / Vision — the "pyramid" reimagined as a layered ethos. */
+export const ABOUT_ETHOS: {
+  eyebrow: string;
+  title: string;
+  highlight: string;
+  paragraphs: string[];
+  tiers: EthosTier[];
+} = {
+  eyebrow: "Our Story",
+  title: "A studio built on craft,",
+  highlight: "not headcount.",
+  paragraphs: [
+    "We've spent over a decade refining what 'premium' means in digital — not flashy, just right. Every engagement is a conversation between a senior team and a team that cares.",
+    "Today we are a global team of designers, engineers, strategists, and operators. We treat your business like our own — slow when it matters, fast when it counts.",
+  ],
+  tiers: [
+    {
+      key: "vision",
+      label: "Our Vision",
+      body: "Set the bar for what premium means in digital — craft that compounds.",
+      icon: "/icons/growth.svg",
+    },
+    {
+      key: "mission",
+      label: "Our Mission",
+      body: "Treat every client's business like our own — slow when it matters, fast when it counts.",
+      icon: "/icons/innovation.svg",
+    },
+    {
+      key: "story",
+      label: "Our Story",
+      body: "From one person in 2012 to a global senior team — built deliberately, never by headcount.",
+      icon: "/icons/team.svg",
+    },
+  ],
+};
+
+export type Offer = { title: string; body: string; icon: string };
+
+/** KPVE Offers — the two flagship engagement models. */
+export const ABOUT_OFFERS: {
+  eyebrow: string;
+  title: string;
+  highlight: string;
+  items: Offer[];
+} = {
+  eyebrow: "KPVE Offers",
+  title: "Two ways we plug",
+  highlight: "straight into your team",
+  items: [
+    {
+      title: "24/7 Backend Tech Support",
+      body: "Round-the-clock engineering for your team, company, or business — including sales and admin support that keeps operations moving.",
+      icon: "/icons/support.svg",
+    },
+    {
+      title: "Product Management & Sourcing",
+      body: "End-to-end product management and overseas sourcing, paired with hands-on product development that ships.",
+      icon: "/icons/business.svg",
+    },
+  ],
+};
+
+export type Difference = { title: string; body: string; icon: string };
+
+/** The KPVE difference — three reasons teams stay. */
+export const ABOUT_DIFFERENCE: {
+  eyebrow: string;
+  title: string;
+  highlight: string;
+  subtitle: string;
+  items: Difference[];
+} = {
+  eyebrow: "Why Us",
+  title: "The KPVE",
+  highlight: "difference",
+  subtitle: "No junior-led teams. No reseller pricing. Just senior people doing the work.",
+  items: [
+    {
+      title: "Senior team only",
+      body: "Every engagement is led by people with 10+ years in their craft.",
+      icon: "/icons/team.svg",
+    },
+    {
+      title: "Fast & opinionated",
+      body: "We move quickly with strong opinions, weakly held — and we explain our work.",
+      icon: "/icons/innovation.svg",
+    },
+    {
+      title: "Long-term partners",
+      body: "We stay long after the launch, building with you on what's next.",
+      icon: "/icons/person-circle.svg",
+    },
+  ],
+};
+
+/** Closing CTA banner — "Become our next case study". */
+export const ABOUT_CTA = {
+  eyebrow: "Let's Build",
+  title: "Become our next case study.",
+  body: "Let's craft a seamless digital experience designed to elevate your brand, engage your audience, and drive measurable growth for your business.",
+  cta: "Let's Talk",
+  ctaHref: "/contact",
+  image: "/background.jpeg",
 } as const;
 
 export type ProcessStep = {
@@ -308,7 +490,7 @@ export const FAQS: Faq[] = [
 
 export const FOOTER_LINKS: NavLink[] = [
   { label: "Home", href: "/#home" },
-  { label: "About Us", href: "/#about" },
+  { label: "About Us", href: "/about" },
   { label: "Services", href: "/services" },
   { label: "Contact", href: "/contact" },
 ];
@@ -573,6 +755,366 @@ export const SERVICE_PAGES: Record<string, ServicePage> = {
         {
           title: "Secure by Default",
           body: "OWASP-aligned best practices baked into every build.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  hosting: {
+    slug: "hosting",
+    metaTitle: "Hosting — KPVE",
+    metaDescription:
+      "Stable, encrypted, multi-region hosting. We architect and operate the infrastructure your product depends on — secure, observable, and globally distributed.",
+    hero: {
+      titleLead: "Hosting",
+      tagline: "Stable, Encrypted, ",
+      taglineHighlight: "Multi-Region Hosting",
+      subtitle:
+        "Hosting solutions designed for velocity, security, and scale across regions.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "/contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Hosting",
+      body: "We architect and operate the infrastructure your product depends on — secure, observable, and globally distributed.",
+      cta: "Learn More",
+      ctaHref: "/contact",
+      items: [
+        "Zero-downtime deploys with rollback safety nets",
+        "Compliance-ready setup (SOC2, GDPR, HIPAA paths)",
+        "24/7 monitoring with on-call response times under 15 minutes",
+        "Cost-optimized cloud architecture from day one",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete hosting practice — strategy through delivery.",
+      items: [
+        {
+          title: "Managed Cloud",
+          body: "AWS, GCP, Cloudflare — architected and operated end-to-end.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Auto-scaling",
+          body: "Capacity that grows and shrinks with your traffic.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Database Ops",
+          body: "Backups, replication, and zero-loss disaster recovery.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Security Hardening",
+          body: "WAF, secrets management, and continuous vulnerability scanning.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Observability",
+          body: "Logs, metrics, and tracing wired in from day one.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Edge & CDN",
+          body: "Globally cached delivery with intelligent routing.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  support: {
+    slug: "support",
+    metaTitle: "Support — KPVE",
+    metaDescription:
+      "Ongoing technical support to keep you moving. Our support practice acts as an extension of your team — proactive, accountable, and grounded in deep product knowledge.",
+    hero: {
+      titleLead: "Support",
+      tagline: "Ongoing Technical Support ",
+      taglineHighlight: "to Keep You Moving",
+      subtitle:
+        "Continuous technical support to keep your systems running and your team unblocked.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "/contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Support",
+      body: "Our support practice acts as an extension of your team — proactive, accountable, and grounded in deep product knowledge.",
+      cta: "Learn More",
+      ctaHref: "/contact",
+      items: [
+        "Dedicated engineers who know your stack inside-out",
+        "SLA-backed response times you can plan around",
+        "Proactive maintenance that prevents incidents before they happen",
+        "Transparent reporting and monthly health reviews",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete support practice — strategy through delivery.",
+      items: [
+        {
+          title: "24/7 Support",
+          body: "Always-on coverage for mission-critical systems.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Proactive Monitoring",
+          body: "We catch issues before your users do.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Iterative Improvements",
+          body: "Continuous improvement, not just break-fix.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Security Patches",
+          body: "Timely updates for dependencies, frameworks, and runtimes.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Backup & Recovery",
+          body: "Tested recovery plans, documented and rehearsed.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Team Training",
+          body: "We level up your in-house team as we go.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  business: {
+    slug: "business",
+    metaTitle: "Business — KPVE",
+    metaDescription:
+      "Operational strategy & digital transformation. We pair strategy with execution — turning operational ambition into shipped systems, dashboards, and processes.",
+    hero: {
+      titleLead: "Business",
+      tagline: "Operational Strategy & ",
+      taglineHighlight: "Digital Transformation",
+      subtitle:
+        "We help you build operational excellence and bring a strong, data-driven foundation to your business.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "/contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Business",
+      body: "We pair strategy with execution — turning operational ambition into shipped systems, dashboards, and processes.",
+      cta: "Learn More",
+      ctaHref: "/contact",
+      items: [
+        "Faster decisions with reliable, real-time data",
+        "Streamlined operations that reduce cost-to-serve",
+        "Process automation that frees up senior time",
+        "Stakeholder-ready reporting and governance",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete business practice — strategy through delivery.",
+      items: [
+        {
+          title: "Operational Strategy",
+          body: "Roadmaps that connect tech investment to business outcomes.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Analytics & BI",
+          body: "From raw data to executive-ready dashboards.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Forecasting",
+          body: "Revenue, growth, and capacity models you can plan with.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Process Automation",
+          body: "Automate the repetitive, free your team for the strategic.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Compliance & Risk",
+          body: "Frameworks to keep growth and governance aligned.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Org Enablement",
+          body: "Tooling and training for high-performing internal teams.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  media: {
+    slug: "media",
+    metaTitle: "Media — KPVE",
+    metaDescription:
+      "High-quality visual content that performs. Cinematic, on-brand storytelling — from product photography to launch films — produced end-to-end by a senior creative team.",
+    hero: {
+      titleLead: "Media",
+      tagline: "High-Quality Visual Content ",
+      taglineHighlight: "That Performs",
+      subtitle:
+        "We produce premium photography and video that elevates your brand and drives engagement.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "/contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Media",
+      body: "Cinematic, on-brand storytelling — from product photography to launch films — produced end-to-end by a senior creative team.",
+      cta: "Learn More",
+      ctaHref: "/contact",
+      items: [
+        "On-brand visual systems that scale across channels",
+        "Cinematic storytelling that earns attention",
+        "Repeatable production pipelines for ongoing content",
+        "Performance-tested creative for paid media",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete media practice — strategy through delivery.",
+      items: [
+        {
+          title: "Photography",
+          body: "Product, lifestyle, and editorial photography in-studio or on-location.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Video Production",
+          body: "From concept to delivery — directed, shot, and edited end-to-end.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Brand Films",
+          body: "Narrative films that connect your brand to its audience.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Post Production",
+          body: "Color, sound, and finishing at broadcast quality.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Motion & 3D",
+          body: "Type, character, and product motion that elevates your story.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Social Cuts",
+          body: "Short-form variants tuned to every platform.",
+          icon: "/icons/person-circle.svg",
+        },
+      ],
+    },
+    process: SHARED_PROCESS,
+    whyChooseUs: SHARED_WHY_CHOOSE_US,
+  },
+
+  "social-media": {
+    slug: "social-media",
+    metaTitle: "Social Media — KPVE",
+    metaDescription:
+      "Audience-first social strategy & content. We build audiences through strategic social media, content creation, and brand storytelling.",
+    hero: {
+      titleLead: "Social Media",
+      tagline: "Audience-First Social ",
+      taglineHighlight: "Strategy & Content",
+      subtitle:
+        "We help you build audiences through strategic social media, content creation, and brand storytelling.",
+      primaryCta: "Start A Project With Us",
+      primaryHref: "/contact",
+      secondaryCta: "Explore Our Services",
+      secondaryHref: "/services",
+    },
+    benefits: {
+      eyebrow: "Business Benefits",
+      title: "Why Teams Choose Us for",
+      highlight: "Social Media",
+      body: "We turn always-on social into a growth channel — strategy, premium creative, and community management, run by a senior team.",
+      cta: "Learn More",
+      ctaHref: "/contact",
+      items: [
+        "Channel strategy aligned to your business goals",
+        "Premium creative across short-form video, image, and copy",
+        "Always-on community management & engagement",
+        "Reporting tied to acquisition, not just impressions",
+      ],
+    },
+    capabilities: {
+      eyebrow: "Capabilities",
+      title: "Everything",
+      highlight: "Included",
+      subtitle: "A complete social media practice — strategy through delivery.",
+      items: [
+        {
+          title: "Content Strategy",
+          body: "Editorial calendars built around audiences and outcomes.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Short-form Video",
+          body: "Reels, Shorts, TikTok creative engineered for the algorithm.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Community",
+          body: "Authentic, on-brand community engagement at scale.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Paid Social",
+          body: "Performance-tested creative paired with rigorous campaign ops.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Influencer",
+          body: "Vetted partnerships and end-to-end campaign management.",
+          icon: "/icons/person-circle.svg",
+        },
+        {
+          title: "Account Management",
+          body: "A senior strategist as your single point of accountability.",
           icon: "/icons/person-circle.svg",
         },
       ],

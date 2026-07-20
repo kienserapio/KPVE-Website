@@ -47,7 +47,7 @@ export function Footer() {
           <FooterColumn
             title="Company"
             links={[
-              { label: "About Us", href: "/#about" },
+              { label: "About Us", href: "/about" },
               { label: "Services", href: "/services" },
               { label: "Projects", href: "#projects" },
               { label: "FAQs", href: "#faq" },
