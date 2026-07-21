@@ -1,38 +1,16 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { Reveal } from "@/components/ui/Reveal";
 import { Icon } from "@/components/ui/Icon";
+import { Field } from "@/components/ui/Field";
+import { CONTACT_INFO } from "@/lib/data";
 
-function Field({
-  label,
-  placeholder,
-  type = "text",
-  name,
-}: {
-  label: string;
-  placeholder: string;
-  type?: string;
-  name: string;
-}) {
-  return (
-    <label className="group flex flex-col gap-3">
-      <span className="text-lg font-medium text-white">
-        {label} <span className="text-gold">*</span>
-      </span>
-      <input
-        required
-        name={name}
-        type={type}
-        placeholder={placeholder}
-        className="peer border-b border-white/15 bg-transparent pb-3 text-muted-3 outline-none transition-colors duration-300 placeholder:text-white/25 focus:border-gold"
-      />
-      <span className="h-px w-0 bg-gold transition-all duration-300 peer-focus:w-full" />
-    </label>
-  );
-}
+const SUPPORT_EMAIL =
+  CONTACT_INFO.find((c) => c.label === "Email")?.value ?? "info@kappatos.com";
 
 /** Creative visual: a radar "signal" broadcasting from the KPVE mark. */
 function SignalPanel() {
@@ -101,14 +79,61 @@ function SignalPanel() {
   );
 }
 
-export function Contact() {
-  const [sent, setSent] = useState(false);
+type Status = "idle" | "submitting" | "sent" | "error";
 
-  function onSubmit(e: FormEvent<HTMLFormElement>) {
+export function Contact() {
+  const pathname = usePathname();
+  const [status, setStatus] = useState<Status>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSent(true);
-    setTimeout(() => setSent(false), 3500);
+    if (status === "submitting") return;
+
+    const form = e.currentTarget;
+    const payload = Object.fromEntries(new FormData(form)) as Record<string, string>;
+
+    setStatus("submitting");
+    setError(null);
+    setFieldErrors({});
+
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, source: pathname }),
+      });
+
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        fieldErrors?: Record<string, string>;
+      };
+
+      if (!res.ok || !data.ok) {
+        setFieldErrors(data.fieldErrors ?? {});
+        setError(
+          data.error ?? "Something went wrong. Please try again in a moment.",
+        );
+        setStatus("error");
+        return;
+      }
+
+      form.reset();
+      setStatus("sent");
+      setTimeout(() => setStatus("idle"), 6000);
+    } catch {
+      // Network failure, offline, request blocked — never silently swallow it.
+      setError(
+        "We couldn't reach the server. Please check your connection and try again.",
+      );
+      setStatus("error");
+    }
   }
+
+  const submitting = status === "submitting";
+  const sent = status === "sent";
 
   return (
     <section id="contact" className="relative overflow-hidden px-6 py-24 sm:py-32">
@@ -138,21 +163,95 @@ export function Contact() {
           </Reveal>
 
           <Reveal delay={0.1}>
-            <form onSubmit={onSubmit} className="mt-10 flex flex-col gap-8">
+            <form onSubmit={onSubmit} className="mt-10 flex flex-col gap-8" noValidate>
               <div className="grid gap-8 sm:grid-cols-2">
-                <Field name="firstName" label="First Name" placeholder="Enter your name" />
-                <Field name="lastName" label="Last Name" placeholder="Enter your last name" />
-                <Field name="phone" label="Phone Number" placeholder="Your phone number" type="tel" />
-                <Field name="email" label="Email Address" placeholder="Enter your email address" type="email" />
+                <Field
+                  name="firstName"
+                  label="First Name"
+                  placeholder="Enter your name"
+                  error={fieldErrors.firstName}
+                />
+                <Field
+                  name="lastName"
+                  label="Last Name"
+                  placeholder="Enter your last name"
+                  error={fieldErrors.lastName}
+                />
+                <Field
+                  name="phone"
+                  label="Phone Number"
+                  placeholder="Your phone number"
+                  type="tel"
+                  required={false}
+                  error={fieldErrors.phone}
+                />
+                <Field
+                  name="email"
+                  label="Email Address"
+                  placeholder="Enter your email address"
+                  type="email"
+                  error={fieldErrors.email}
+                />
               </div>
-              <Field name="message" label="How can we help you?" placeholder="Message" />
+              <Field
+                name="message"
+                label="How can we help you?"
+                placeholder="Message"
+                as="textarea"
+                rows={4}
+                error={fieldErrors.message}
+              />
+
+              {/* Honeypot — hidden from people, irresistible to bots. */}
+              <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+                <label htmlFor="website">Website</label>
+                <input
+                  id="website"
+                  name="website"
+                  type="text"
+                  tabIndex={-1}
+                  autoComplete="off"
+                />
+              </div>
+
+              {error && (
+                <div
+                  role="alert"
+                  aria-live="polite"
+                  className="rounded-2xl border border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger"
+                >
+                  <p>{error}</p>
+                  <p className="mt-1 text-muted-3">
+                    You can also reach us directly at{" "}
+                    <a
+                      href={`mailto:${SUPPORT_EMAIL}`}
+                      className="text-gold underline underline-offset-4"
+                    >
+                      {SUPPORT_EMAIL}
+                    </a>
+                    .
+                  </p>
+                </div>
+              )}
+
+              <p aria-live="polite" className="sr-only">
+                {submitting ? "Sending your message" : sent ? "Message sent" : ""}
+              </p>
 
               <button
                 type="submit"
-                disabled={sent}
-                className="group/btn mt-2 inline-flex w-fit items-center gap-2 rounded-full bg-gold-gradient px-7 py-4 text-sm font-medium text-black shadow-[0_10px_30px_-8px_rgba(189,139,40,0.6)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 active:scale-95"
+                disabled={submitting || sent}
+                className="group/btn mt-2 inline-flex w-fit items-center gap-2 rounded-full bg-gold-gradient px-7 py-4 text-sm font-medium text-black shadow-[0_10px_30px_-8px_rgba(189,139,40,0.6)] transition-all duration-300 hover:-translate-y-0.5 hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-60"
               >
-                {sent ? (
+                {submitting ? (
+                  <>
+                    Sending
+                    <span
+                      aria-hidden
+                      className="size-4 animate-spin rounded-full border-2 border-black/70 border-t-transparent"
+                    />
+                  </>
+                ) : sent ? (
                   <>
                     Message Sent
                     <Icon src="/icons/check.svg" tone="black" className="size-4" />

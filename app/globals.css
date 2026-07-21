@@ -28,6 +28,12 @@
   --color-muted-2: #808080;
   --color-muted-3: #b8b8b8;
 
+  /* Status — the marketing palette is gold-only; the CRM needs semantics */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+  --color-info: #60a5fa;
+
   /* Type */
   --font-sans: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
   --font-sora: var(--font-sora), ui-sans-serif, system-ui, sans-serif;
@@ -192,6 +198,72 @@ body {
     );
     background-size: 22px 22px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Admin theme (CRM only)
+
+   The marketing site is dark-only and stays that way. The admin area supports
+   both, driven by a `data-theme` attribute on its own wrapper — set
+   server-side from a cookie in app/(admin)/layout.tsx, so there is no
+   flash-of-wrong-theme on load.
+
+   Marketing pages never read that cookie, which keeps them fully static.
+--------------------------------------------------------------------------- */
+[data-theme] {
+  --admin-bg: #050505;
+  --admin-surface: #101010;
+  --admin-surface-2: #171717;
+  --admin-raised: #1c1c1c;
+  --admin-border: #262626;
+  --admin-border-strong: #333333;
+  --admin-fg: #ffffff;
+  --admin-fg-muted: #a3a3a3;
+  --admin-fg-subtle: #737373;
+  --admin-accent: #e9c04b;
+  --admin-accent-fg: #050505;
+  --admin-input: #0d0d0d;
+  --admin-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+
+  /* Lead status — tuned for legibility on the dark surface */
+  --st-new-fg: #fcd34d;
+  --st-contacted-fg: #93c5fd;
+  --st-qualified-fg: #c4b5fd;
+  --st-converted-fg: #6ee7b7;
+  --st-archived-fg: #a3a3a3;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --admin-bg: #f7f7f5;
+  --admin-surface: #ffffff;
+  --admin-surface-2: #fbfbfa;
+  --admin-raised: #ffffff;
+  --admin-border: #e5e4e0;
+  --admin-border-strong: #d3d2cd;
+  --admin-fg: #16150f;
+  --admin-fg-muted: #5f5d55;
+  --admin-fg-subtle: #8b897f;
+  --admin-accent: #bd8b28;
+  --admin-accent-fg: #ffffff;
+  --admin-input: #ffffff;
+  --admin-shadow: 0 1px 2px rgba(20, 19, 14, 0.06), 0 1px 3px rgba(20, 19, 14, 0.04);
+
+  /* Same hues, darkened to hold contrast on the light surface */
+  --st-new-fg: #92620a;
+  --st-contacted-fg: #1d4ed8;
+  --st-qualified-fg: #6d28d9;
+  --st-converted-fg: #047857;
+  --st-archived-fg: #57534e;
+
+  color-scheme: light;
+}
+
+/* Keep the page behind the admin shell matching it, so overscroll and any
+   uncovered gap don't flash the marketing black. */
+body:has([data-theme="light"]) {
+  background: #f7f7f5;
 }
 
 @media (prefers-reduced-motion: reduce) {
