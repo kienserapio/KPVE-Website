@@ -139,6 +139,64 @@ export async function listLeads(filters: {
   };
 }
 
+export type LeadExportRow = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+  category: ServiceCategory;
+  priority: Priority;
+  status: LeadStatus;
+  source: string;
+  assignedStaffName: string | null;
+  message: string;
+  createdAt: Date;
+};
+
+/** Full result set for CSV export — same filters as the list, no pagination. */
+export async function exportLeads(filters: {
+  status?: LeadStatus;
+  category?: ServiceCategory;
+  q?: string;
+}): Promise<LeadExportRow[]> {
+  await requireSession();
+
+  const conditions = [];
+  if (filters.status) conditions.push(eq(leads.status, filters.status));
+  if (filters.category) conditions.push(eq(leads.category, filters.category));
+  if (filters.q) {
+    const term = `%${filters.q}%`;
+    conditions.push(
+      or(
+        ilike(leads.firstName, term),
+        ilike(leads.lastName, term),
+        ilike(leads.email, term),
+        ilike(leads.message, term),
+      ),
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  return db
+    .select({
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+      email: leads.email,
+      phone: leads.phone,
+      category: leads.category,
+      priority: leads.priority,
+      status: leads.status,
+      source: leads.source,
+      assignedStaffName: staffUsers.name,
+      message: leads.message,
+      createdAt: leads.createdAt,
+    })
+    .from(leads)
+    .leftJoin(staffUsers, eq(leads.assignedStaffId, staffUsers.id))
+    .where(where)
+    .orderBy(desc(leads.createdAt));
+}
+
 export async function getLead(id: string): Promise<LeadDetail | null> {
   await requireSession();
 

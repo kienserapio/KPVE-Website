@@ -46,7 +46,7 @@ export function LeadFilters({
       if (query) params.set("q", query);
       else params.delete("q");
       params.delete("page"); // a new search always starts at page 1
-      router.replace(`/admin?${params.toString()}`);
+      router.replace(`/admin/enquiries?${params.toString()}`);
     }, 350);
 
     return () => clearTimeout(timeout);
@@ -58,7 +58,7 @@ export function LeadFilters({
     if (currentCategory) params.set("category", currentCategory);
     if (currentQuery) params.set("q", currentQuery);
     const qs = params.toString();
-    return qs ? `/admin?${qs}` : "/admin";
+    return qs ? `/admin/enquiries?${qs}` : "/admin/enquiries";
   }
 
   function onCategoryChange(value: string) {
@@ -66,7 +66,7 @@ export function LeadFilters({
     if (value) params.set("category", value);
     else params.delete("category");
     params.delete("page");
-    router.replace(`/admin?${params.toString()}`);
+    router.replace(`/admin/enquiries?${params.toString()}`);
   }
 
   return (

@@ -39,7 +39,7 @@ export default async function LeadDetailPage({
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/admin"
+          href="/admin/enquiries"
           className="text-sm text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
         >
           ← Back to enquiries

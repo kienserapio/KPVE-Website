@@ -24,8 +24,10 @@ export default async function LoginPage({
 
       <div className="w-full max-w-sm">
         <Link href="/" className="mb-10 flex items-center justify-center gap-3">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="KPVE" className="size-11 object-contain" />
+          <span className="grid size-11 place-items-center rounded-full bg-[#050505] ring-1 ring-inset ring-white/10">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="KPVE" className="size-6 object-contain" />
+          </span>
           <span className="text-xl font-semibold tracking-tight text-white">KPVE</span>
         </Link>
 

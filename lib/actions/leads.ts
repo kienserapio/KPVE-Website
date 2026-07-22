@@ -48,6 +48,7 @@ export async function updateLeadAction(
   }
 
   revalidatePath("/admin");
+  revalidatePath("/admin/enquiries");
   revalidatePath(`/admin/leads/${leadId}`);
   return { ok: true, error: null };
 }
@@ -71,6 +72,7 @@ export async function deleteLeadAction(
   }
 
   revalidatePath("/admin");
+  revalidatePath("/admin/enquiries");
   return { ok: true, error: null };
 }
 
@@ -94,6 +96,7 @@ export async function convertLeadToClientAction(formData: FormData): Promise<voi
   }
 
   revalidatePath("/admin");
+  revalidatePath("/admin/enquiries");
   revalidatePath("/admin/clients");
   revalidatePath(`/admin/leads/${parsed.data.leadId}`);
   redirect(`/admin/clients/${clientId}`);

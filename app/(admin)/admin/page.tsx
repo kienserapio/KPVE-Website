@@ -1,216 +1,215 @@
 import Link from "next/link";
 
 import { verifySession } from "@/lib/dal/session";
-import { listLeads, getLeadStats } from "@/lib/dal/leads";
-import { leadFiltersSchema } from "@/lib/validation";
+import { getDashboardData } from "@/lib/dal/dashboard";
 import { formatRelative } from "@/lib/utils";
 import {
   Card,
   CategoryBadge,
-  EmptyState,
-  PriorityBadge,
   StatCard,
   StatusBadge,
   Table,
   Td,
   Th,
-  STATUS_LABELS,
 } from "@/components/admin/ui";
-import { LeadFilters } from "@/components/admin/LeadFilters";
+import { WeeklyBars, PipelineBars, CategoryBars } from "@/components/admin/charts";
 
-export default async function AdminLeadsPage({
-  searchParams,
-}: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
-  // Pages re-verify rather than trusting the layout — layouts don't re-render
-  // on navigation under Partial Rendering.
-  await verifySession();
+export default async function OverviewPage() {
+  const staff = await verifySession();
+  const data = await getDashboardData();
 
-  const params = await searchParams;
-  const parsed = leadFiltersSchema.safeParse({
-    status: params.status,
-    category: params.category,
-    q: params.q,
-    page: params.page ?? 1,
-  });
-  const filters = parsed.success ? parsed.data : { page: 1 };
-
-  const [stats, { items, total, page, pageCount }] = await Promise.all([
-    getLeadStats(),
-    listLeads(filters),
-  ]);
-
-  const hasFilters = Boolean(filters.status || filters.category || filters.q);
+  const firstName = staff.name.split(" ")[0] || "there";
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Enquiries</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Welcome back, {firstName}
+        </h1>
         <p className="mt-1 text-sm text-[var(--admin-fg-muted)]">
-          Every message submitted through the website.
+          Here&apos;s where things stand across enquiries and clients.
         </p>
       </div>
 
+      {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="New" value={stats.newCount} accent hint="Awaiting first contact" />
+        <StatCard
+          label="New enquiries"
+          value={data.leadStats.newCount}
+          accent
+          hint="Awaiting first contact"
+        />
         <StatCard
           label="High priority"
-          value={stats.highPriorityOpen}
+          value={data.leadStats.highPriorityOpen}
           hint="Open, flagged high"
         />
-        <StatCard label="This week" value={stats.thisWeek} hint="Last 7 days" />
-        <StatCard label="Total" value={stats.total} hint="All time" />
+        <StatCard
+          label="Active clients"
+          value={data.clientStats.active}
+          hint={`${data.clientStats.prospects} prospects`}
+        />
+        <StatCard
+          label="Conversion rate"
+          value={`${data.conversionRate}%`}
+          hint="Enquiries won, all time"
+        />
       </div>
 
-      <Card>
-        <div className="border-b border-[var(--admin-border)] p-4">
-          <LeadFilters
-            currentStatus={filters.status}
-            currentCategory={filters.category}
-            currentQuery={filters.q ?? ""}
-            counts={stats.byStatus}
-            totalCount={stats.total}
-          />
-        </div>
+      {/* Charts */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <SectionCard
+          title="Enquiries"
+          subtitle="Last 8 weeks"
+          className="lg:col-span-2"
+          action={<CardLink href="/admin/enquiries">All enquiries</CardLink>}
+        >
+          <WeeklyBars data={data.enquiriesByWeek} />
+        </SectionCard>
 
-        {items.length === 0 ? (
-          <EmptyState
-            title={hasFilters ? "No matching enquiries" : "No enquiries yet"}
-            description={
-              hasFilters
-                ? "Try clearing the filter or searching for something else."
-                : "New submissions from the website contact form will appear here."
-            }
-          >
-            {hasFilters && (
-              <Link
-                href="/admin"
-                className="mt-2 text-sm font-medium text-[var(--admin-accent)] hover:underline"
-              >
-                Clear filters
-              </Link>
-            )}
-          </EmptyState>
-        ) : (
-          <>
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Enquiry</Th>
-                  <Th>From</Th>
-                  <Th>Priority</Th>
-                  <Th>Status</Th>
-                  <Th className="text-right">Received</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((lead) => (
-                  <tr
-                    key={lead.id}
-                    className="group transition hover:bg-[var(--admin-surface-2)]"
+        <SectionCard title="Pipeline" subtitle="By status">
+          <PipelineBars byStatus={data.leadStats.byStatus} />
+        </SectionCard>
+
+        <SectionCard title="By category" subtitle="What they want" className="lg:col-span-2">
+          <CategoryBars data={data.leadsByCategory} />
+        </SectionCard>
+
+        <SectionCard
+          title="Tasks due"
+          subtitle="Overdue & today"
+          action={<CardLink href="/admin/clients">All clients</CardLink>}
+        >
+          {data.dueTasks.length === 0 ? (
+            <p className="text-sm text-[var(--admin-fg-muted)]">
+              Nothing due. You&apos;re all caught up.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-[var(--admin-border)]">
+              {data.dueTasks.map((task) => (
+                <li key={task.id} className="py-2.5 first:pt-0 last:pb-0">
+                  <Link
+                    href={`/admin/clients/${task.clientId}`}
+                    className="group block"
                   >
-                    {/* Topic-led: what they want and what they said, not who they
-                        are. The name still opens the record, just secondary. */}
-                    <Td className="max-w-[380px]">
-                      <div className="flex items-center gap-2">
-                        <CategoryBadge category={lead.category} />
-                      </div>
-                      <Link
-                        href={`/admin/leads/${lead.id}`}
-                        className="mt-1.5 block truncate text-[var(--admin-fg)] hover:text-[var(--admin-accent)] hover:underline"
+                    <p className="truncate text-sm text-[var(--admin-fg)] group-hover:text-[var(--admin-accent)]">
+                      {task.title}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs">
+                      <span className="text-[var(--admin-fg-subtle)]">
+                        {task.clientName}
+                      </span>
+                      <span className="text-[var(--admin-fg-subtle)]">·</span>
+                      <span
+                        className={
+                          task.overdue
+                            ? "font-medium text-red-500"
+                            : "text-[var(--admin-fg-muted)]"
+                        }
                       >
-                        {lead.message}
-                      </Link>
-                    </Td>
-                    <Td>
-                      <p className="font-medium">
-                        {lead.firstName} {lead.lastName}
-                      </p>
-                      <a
-                        href={`mailto:${lead.email}`}
-                        className="mt-0.5 block truncate text-xs text-[var(--admin-fg-muted)] hover:text-[var(--admin-accent)]"
-                      >
-                        {lead.email}
-                      </a>
-                    </Td>
-                    <Td>
-                      <PriorityBadge priority={lead.priority} />
-                    </Td>
-                    <Td>
-                      <StatusBadge status={lead.status} />
-                    </Td>
-                    <Td className="whitespace-nowrap text-right text-[var(--admin-fg-subtle)]">
-                      {formatRelative(lead.createdAt)}
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+                        {task.overdue ? "Overdue" : "Today"}
+                      </span>
+                    </p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      </div>
 
-            <div className="flex items-center justify-between gap-4 p-4 text-sm text-[var(--admin-fg-muted)]">
-              <p>
-                {total} {total === 1 ? "enquiry" : "enquiries"}
-                {filters.status ? ` · ${STATUS_LABELS[filters.status]}` : ""}
-              </p>
-              {pageCount > 1 && (
-                <div className="flex items-center gap-2">
-                  <PageLink
-                    page={page - 1}
-                    filters={filters}
-                    disabled={page <= 1}
-                    label="Previous"
-                  />
-                  <span className="tabular-nums">
-                    {page} / {pageCount}
-                  </span>
-                  <PageLink
-                    page={page + 1}
-                    filters={filters}
-                    disabled={page >= pageCount}
-                    label="Next"
-                  />
-                </div>
-              )}
-            </div>
-          </>
+      {/* Recent enquiries */}
+      <SectionCard
+        title="Recent enquiries"
+        subtitle="Newest first"
+        bodyClassName="p-0"
+        action={<CardLink href="/admin/enquiries">View all</CardLink>}
+      >
+        {data.recentLeads.length === 0 ? (
+          <p className="px-6 py-8 text-sm text-[var(--admin-fg-muted)]">
+            No enquiries yet.
+          </p>
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>From</Th>
+                <Th>Category</Th>
+                <Th>Status</Th>
+                <Th className="text-right">Received</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.recentLeads.map((lead) => (
+                <tr key={lead.id} className="transition hover:bg-[var(--admin-surface-2)]">
+                  <Td>
+                    <Link
+                      href={`/admin/leads/${lead.id}`}
+                      className="font-medium hover:text-[var(--admin-accent)] hover:underline"
+                    >
+                      {lead.firstName} {lead.lastName}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <CategoryBadge category={lead.category} />
+                  </Td>
+                  <Td>
+                    <StatusBadge status={lead.status} />
+                  </Td>
+                  <Td className="whitespace-nowrap text-right text-[var(--admin-fg-subtle)]">
+                    {formatRelative(lead.createdAt)}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
         )}
-      </Card>
+      </SectionCard>
     </div>
   );
 }
 
-function PageLink({
-  page,
-  filters,
-  disabled,
-  label,
+function SectionCard({
+  title,
+  subtitle,
+  action,
+  children,
+  className,
+  bodyClassName = "p-5",
 }: {
-  page: number;
-  filters: { status?: string; category?: string; q?: string };
-  disabled: boolean;
-  label: string;
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+  bodyClassName?: string;
 }) {
-  if (disabled) {
-    return (
-      <span className="cursor-not-allowed rounded-lg border border-[var(--admin-border)] px-3 py-1.5 opacity-40">
-        {label}
-      </span>
-    );
-  }
+  return (
+    <Card className={className}>
+      <div className="flex items-start justify-between gap-3 border-b border-[var(--admin-border)] p-5">
+        <div>
+          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+          {subtitle && (
+            <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">{subtitle}</p>
+          )}
+        </div>
+        {action}
+      </div>
+      <div className={bodyClassName}>{children}</div>
+    </Card>
+  );
+}
 
-  const query = new URLSearchParams();
-  if (filters.status) query.set("status", filters.status);
-  if (filters.category) query.set("category", filters.category);
-  if (filters.q) query.set("q", filters.q);
-  query.set("page", String(page));
-
+function CardLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
     <Link
-      href={`/admin?${query.toString()}`}
-      className="rounded-lg border border-[var(--admin-border)] px-3 py-1.5 transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+      href={href}
+      className="shrink-0 text-xs font-medium text-[var(--admin-accent)] hover:underline"
     >
-      {label}
+      {children} →
     </Link>
   );
 }
+
+// The dashboard reflects live counts on every visit.
+export const dynamic = "force-dynamic";

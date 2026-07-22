@@ -9,10 +9,77 @@ import { logout } from "@/lib/actions/auth";
 import { setThemeAction } from "@/lib/actions/leads";
 import type { SessionStaff } from "@/lib/dal/session";
 
+function IconBase({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className="size-[18px] shrink-0"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function OverviewIcon() {
+  return (
+    <IconBase>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+    </IconBase>
+  );
+}
+
+function EnquiriesIcon() {
+  return (
+    <IconBase>
+      <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+      <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+    </IconBase>
+  );
+}
+
+function ClientsIcon() {
+  return (
+    <IconBase>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </IconBase>
+  );
+}
+
+function ActivityIcon() {
+  return (
+    <IconBase>
+      <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+    </IconBase>
+  );
+}
+
+function ExternalIcon() {
+  return (
+    <IconBase>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+    </IconBase>
+  );
+}
+
 const NAV = [
-  { href: "/admin", label: "Enquiries", exact: true },
-  { href: "/admin/clients", label: "Clients", exact: false },
-  { href: "/admin/activity", label: "Activity", exact: false },
+  { href: "/admin", label: "Overview", exact: true, Icon: OverviewIcon },
+  { href: "/admin/enquiries", label: "Enquiries", exact: false, Icon: EnquiriesIcon },
+  { href: "/admin/clients", label: "Clients", exact: false, Icon: ClientsIcon },
+  { href: "/admin/activity", label: "Activity", exact: false, Icon: ActivityIcon },
 ];
 
 function SunIcon() {
@@ -35,8 +102,11 @@ function MoonIcon() {
 function Brand() {
   return (
     <Link href="/admin" className="flex shrink-0 items-center gap-2.5">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/logo.png" alt="" className="size-8 object-contain" />
+      {/* White KPVE mark on a black circle — the same badge used for the favicon. */}
+      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[#050505] ring-1 ring-inset ring-white/10">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="" className="size-4 object-contain" />
+      </span>
       <span className="font-semibold tracking-tight">KPVE</span>
       <span className="rounded-full bg-[var(--admin-surface-2)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--admin-fg-subtle)]">
         CRM
@@ -68,12 +138,16 @@ export function AdminShell({
   const nextTheme = theme === "light" ? "dark" : "light";
 
   function isActive(item: (typeof NAV)[number]) {
+    // Enquiry detail lives at /admin/leads/[id] — keep Enquiries lit there.
+    if (item.href === "/admin/enquiries" && pathname.startsWith("/admin/leads")) {
+      return true;
+    }
     return item.exact ? pathname === item.href : pathname.startsWith(item.href);
   }
 
   const navLinkClass = (active: boolean) =>
     cn(
-      "rounded-lg px-3 py-2 text-sm font-medium transition",
+      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition",
       active
         ? "bg-[var(--admin-surface-2)] text-[var(--admin-fg)]"
         : "text-[var(--admin-fg-muted)] hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]",
@@ -140,14 +214,16 @@ export function AdminShell({
               aria-current={isActive(item) ? "page" : undefined}
               className={navLinkClass(isActive(item))}
             >
+              <item.Icon />
               {item.label}
             </Link>
           ))}
           <Link
             href="/"
-            className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+            className="mt-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
           >
-            View website ↗
+            <ExternalIcon />
+            View website
           </Link>
         </nav>
 
@@ -184,15 +260,17 @@ export function AdminShell({
                   aria-current={isActive(item) ? "page" : undefined}
                   className={navLinkClass(isActive(item))}
                 >
+                  <item.Icon />
                   {item.label}
                 </Link>
               ))}
               <Link
                 href="/"
                 onClick={() => setMenuOpen(false)}
-                className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
               >
-                View website ↗
+                <ExternalIcon />
+                View website
               </Link>
             </div>
             <div className="mt-3 border-t border-[var(--admin-border)] pt-2">

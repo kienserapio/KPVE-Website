@@ -1,0 +1,64 @@
+import { requireSession } from "@/lib/dal/session";
+import { exportClients } from "@/lib/dal/clients";
+import { clientFiltersSchema } from "@/lib/validation";
+import { toCsv, csvDateStamp } from "@/lib/csv";
+import { CATEGORY_LABELS, CLIENT_STATUS_LABELS } from "@/components/admin/ui";
+
+export const dynamic = "force-dynamic";
+
+export async function GET(request: Request) {
+  try {
+    await requireSession();
+  } catch {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const url = new URL(request.url);
+  const parsed = clientFiltersSchema.safeParse({
+    status: url.searchParams.get("status") ?? undefined,
+    category: url.searchParams.get("category") ?? undefined,
+    q: url.searchParams.get("q") ?? undefined,
+  });
+  const filters = parsed.success ? parsed.data : {};
+
+  const rows = await exportClients(filters);
+
+  const csv = toCsv(
+    [
+      "Name",
+      "Company",
+      "Email",
+      "Phone",
+      "Category",
+      "Status",
+      "Value",
+      "Account owner",
+      "Open tasks",
+      "Created",
+      "Updated",
+    ],
+    rows.map((r) => [
+      r.name,
+      r.company,
+      r.email,
+      r.phone,
+      CATEGORY_LABELS[r.category],
+      CLIENT_STATUS_LABELS[r.status],
+      r.value,
+      r.assignedStaffName,
+      r.openTasks,
+      r.createdAt.toISOString(),
+      r.updatedAt.toISOString(),
+    ]),
+  );
+
+  const filename = `kpve-clients-${csvDateStamp(new Date())}.csv`;
+
+  return new Response(csv, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}

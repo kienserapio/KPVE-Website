@@ -128,6 +128,63 @@ export async function listClients(filters: {
   };
 }
 
+export type ClientExportRow = {
+  name: string;
+  company: string | null;
+  email: string;
+  phone: string | null;
+  category: ServiceCategory;
+  status: ClientStatus;
+  value: string | null;
+  assignedStaffName: string | null;
+  openTasks: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+/** Full result set for CSV export — same filters as the list, no pagination. */
+export async function exportClients(filters: {
+  status?: ClientStatus;
+  category?: ServiceCategory;
+  q?: string;
+}): Promise<ClientExportRow[]> {
+  await requireSession();
+
+  const conditions = [];
+  if (filters.status) conditions.push(eq(clients.status, filters.status));
+  if (filters.category) conditions.push(eq(clients.category, filters.category));
+  if (filters.q) {
+    const term = `%${filters.q}%`;
+    conditions.push(
+      or(
+        ilike(clients.name, term),
+        ilike(clients.company, term),
+        ilike(clients.email, term),
+      ),
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  return db
+    .select({
+      name: clients.name,
+      company: clients.company,
+      email: clients.email,
+      phone: clients.phone,
+      category: clients.category,
+      status: clients.status,
+      value: clients.value,
+      assignedStaffName: staffUsers.name,
+      openTasks: openTasksExpr,
+      createdAt: clients.createdAt,
+      updatedAt: clients.updatedAt,
+    })
+    .from(clients)
+    .leftJoin(staffUsers, eq(clients.assignedStaffId, staffUsers.id))
+    .where(where)
+    .orderBy(desc(clients.updatedAt));
+}
+
 export async function getClient(id: string): Promise<ClientDetail | null> {
   await requireSession();
 

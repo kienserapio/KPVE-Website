@@ -1,24 +1,25 @@
 import Link from "next/link";
 
 import { verifySession } from "@/lib/dal/session";
-import { listClients, getClientStats } from "@/lib/dal/clients";
-import { clientFiltersSchema } from "@/lib/validation";
+import { listLeads, getLeadStats } from "@/lib/dal/leads";
+import { leadFiltersSchema } from "@/lib/validation";
 import { formatRelative } from "@/lib/utils";
 import {
   Card,
   CategoryBadge,
-  ClientStatusBadge,
   EmptyState,
+  PriorityBadge,
   StatCard,
+  StatusBadge,
   Table,
   Td,
   Th,
-  CLIENT_STATUS_LABELS,
+  STATUS_LABELS,
 } from "@/components/admin/ui";
-import { ClientFilters } from "@/components/admin/ClientFilters";
+import { LeadFilters } from "@/components/admin/LeadFilters";
 import { ExportButton } from "@/components/admin/ExportButton";
 
-export default async function ClientsPage({
+export default async function EnquiriesPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -26,7 +27,7 @@ export default async function ClientsPage({
   await verifySession();
 
   const params = await searchParams;
-  const parsed = clientFiltersSchema.safeParse({
+  const parsed = leadFiltersSchema.safeParse({
     status: params.status,
     category: params.category,
     q: params.q,
@@ -35,8 +36,8 @@ export default async function ClientsPage({
   const filters = parsed.success ? parsed.data : { page: 1 };
 
   const [stats, { items, total, page, pageCount }] = await Promise.all([
-    getClientStats(),
-    listClients(filters),
+    getLeadStats(),
+    listLeads(filters),
   ]);
 
   const hasFilters = Boolean(filters.status || filters.category || filters.q);
@@ -50,32 +51,28 @@ export default async function ClientsPage({
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Enquiries</h1>
           <p className="mt-1 text-sm text-[var(--admin-fg-muted)]">
-            Everyone you&apos;re working with, and what&apos;s next for each.
+            Every message submitted through the website.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <ExportButton href={`/admin/clients/export?${exportQuery.toString()}`} />
-          <Link
-            href="/admin/clients/new"
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--admin-accent)] px-4 py-2.5 text-sm font-medium text-[var(--admin-accent-fg)] transition hover:brightness-110"
-          >
-            + New client
-          </Link>
-        </div>
+        <ExportButton href={`/admin/enquiries/export?${exportQuery.toString()}`} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Active" value={stats.active} accent hint="Currently working with" />
-        <StatCard label="Prospects" value={stats.prospects} hint="Not yet won" />
-        <StatCard label="Open tasks" value={stats.openTasks} hint="Across all clients" />
+        <StatCard label="New" value={stats.newCount} accent hint="Awaiting first contact" />
+        <StatCard
+          label="High priority"
+          value={stats.highPriorityOpen}
+          hint="Open, flagged high"
+        />
+        <StatCard label="This week" value={stats.thisWeek} hint="Last 7 days" />
         <StatCard label="Total" value={stats.total} hint="All time" />
       </div>
 
       <Card>
         <div className="border-b border-[var(--admin-border)] p-4">
-          <ClientFilters
+          <LeadFilters
             currentStatus={filters.status}
             currentCategory={filters.category}
             currentQuery={filters.q ?? ""}
@@ -86,26 +83,19 @@ export default async function ClientsPage({
 
         {items.length === 0 ? (
           <EmptyState
-            title={hasFilters ? "No matching clients" : "No clients yet"}
+            title={hasFilters ? "No matching enquiries" : "No enquiries yet"}
             description={
               hasFilters
                 ? "Try clearing the filter or searching for something else."
-                : "Convert a won enquiry, or add a client by hand to start tracking work."
+                : "New submissions from the website contact form will appear here."
             }
           >
-            {hasFilters ? (
+            {hasFilters && (
               <Link
-                href="/admin/clients"
+                href="/admin/enquiries"
                 className="mt-2 text-sm font-medium text-[var(--admin-accent)] hover:underline"
               >
                 Clear filters
-              </Link>
-            ) : (
-              <Link
-                href="/admin/clients/new"
-                className="mt-2 text-sm font-medium text-[var(--admin-accent)] hover:underline"
-              >
-                Add a client
               </Link>
             )}
           </EmptyState>
@@ -114,52 +104,51 @@ export default async function ClientsPage({
             <Table>
               <thead>
                 <tr>
-                  <Th>Client</Th>
-                  <Th>Category</Th>
+                  <Th>Enquiry</Th>
+                  <Th>From</Th>
+                  <Th>Priority</Th>
                   <Th>Status</Th>
-                  <Th>Open tasks</Th>
-                  <Th>Value</Th>
-                  <Th className="text-right">Updated</Th>
+                  <Th className="text-right">Received</Th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((client) => (
+                {items.map((lead) => (
                   <tr
-                    key={client.id}
+                    key={lead.id}
                     className="group transition hover:bg-[var(--admin-surface-2)]"
                   >
-                    <Td>
+                    {/* Topic-led: what they want and what they said, not who they
+                        are. The name still opens the record, just secondary. */}
+                    <Td className="max-w-[380px]">
+                      <div className="flex items-center gap-2">
+                        <CategoryBadge category={lead.category} />
+                      </div>
                       <Link
-                        href={`/admin/clients/${client.id}`}
-                        className="font-medium hover:text-[var(--admin-accent)] hover:underline"
+                        href={`/admin/leads/${lead.id}`}
+                        className="mt-1.5 block truncate text-[var(--admin-fg)] hover:text-[var(--admin-accent)] hover:underline"
                       >
-                        {client.name}
+                        {lead.message}
                       </Link>
-                      <p className="mt-0.5 truncate text-xs text-[var(--admin-fg-subtle)]">
-                        {client.company ? `${client.company} · ` : ""}
-                        {client.email}
+                    </Td>
+                    <Td>
+                      <p className="font-medium">
+                        {lead.firstName} {lead.lastName}
                       </p>
+                      <a
+                        href={`mailto:${lead.email}`}
+                        className="mt-0.5 block truncate text-xs text-[var(--admin-fg-muted)] hover:text-[var(--admin-accent)]"
+                      >
+                        {lead.email}
+                      </a>
                     </Td>
                     <Td>
-                      <CategoryBadge category={client.category} />
+                      <PriorityBadge priority={lead.priority} />
                     </Td>
                     <Td>
-                      <ClientStatusBadge status={client.status} />
-                    </Td>
-                    <Td>
-                      {client.openTasks > 0 ? (
-                        <span className="inline-flex items-center rounded-full bg-[var(--admin-surface-2)] px-2 py-0.5 text-xs font-medium tabular-nums text-[var(--admin-fg)]">
-                          {client.openTasks}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-[var(--admin-fg-subtle)]">—</span>
-                      )}
-                    </Td>
-                    <Td className="text-[var(--admin-fg-muted)]">
-                      {client.value ?? <span className="text-[var(--admin-fg-subtle)]">—</span>}
+                      <StatusBadge status={lead.status} />
                     </Td>
                     <Td className="whitespace-nowrap text-right text-[var(--admin-fg-subtle)]">
-                      {formatRelative(client.updatedAt)}
+                      {formatRelative(lead.createdAt)}
                     </Td>
                   </tr>
                 ))}
@@ -168,8 +157,8 @@ export default async function ClientsPage({
 
             <div className="flex items-center justify-between gap-4 p-4 text-sm text-[var(--admin-fg-muted)]">
               <p>
-                {total} {total === 1 ? "client" : "clients"}
-                {filters.status ? ` · ${CLIENT_STATUS_LABELS[filters.status]}` : ""}
+                {total} {total === 1 ? "enquiry" : "enquiries"}
+                {filters.status ? ` · ${STATUS_LABELS[filters.status]}` : ""}
               </p>
               {pageCount > 1 && (
                 <div className="flex items-center gap-2">
@@ -220,7 +209,7 @@ function PageLink({
 
   return (
     <Link
-      href={`/admin/clients?${query.toString()}`}
+      href={`/admin/enquiries?${query.toString()}`}
       className="rounded-lg border border-[var(--admin-border)] px-3 py-1.5 transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
     >
       {label}
