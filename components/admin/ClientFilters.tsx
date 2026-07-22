@@ -5,28 +5,25 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import type { LeadStatus, ServiceCategory } from "@/lib/db/schema";
-import { STATUS_LABELS, CATEGORY_LABELS, SERVICE_CATEGORIES } from "./ui";
+import type { ClientStatus, ServiceCategory } from "@/lib/db/schema";
+import {
+  CLIENT_STATUS_LABELS,
+  CLIENT_STATUSES,
+  CATEGORY_LABELS,
+  SERVICE_CATEGORIES,
+} from "./ui";
 
-const STATUSES: LeadStatus[] = [
-  "new",
-  "contacted",
-  "qualified",
-  "converted",
-  "archived",
-];
-
-export function LeadFilters({
+export function ClientFilters({
   currentStatus,
   currentCategory,
   currentQuery,
   counts,
   totalCount,
 }: {
-  currentStatus?: LeadStatus;
+  currentStatus?: ClientStatus;
   currentCategory?: ServiceCategory;
   currentQuery: string;
-  counts: Record<LeadStatus, number>;
+  counts: Record<ClientStatus, number>;
   totalCount: number;
 }) {
   const router = useRouter();
@@ -34,31 +31,28 @@ export function LeadFilters({
   const [query, setQuery] = useState(currentQuery);
   const isFirstRender = useRef(true);
 
-  // Debounce so typing doesn't fire a request per keystroke.
   useEffect(() => {
     if (isFirstRender.current) {
       isFirstRender.current = false;
       return;
     }
-
     const timeout = setTimeout(() => {
       const params = new URLSearchParams(searchParams.toString());
       if (query) params.set("q", query);
       else params.delete("q");
-      params.delete("page"); // a new search always starts at page 1
-      router.replace(`/admin?${params.toString()}`);
+      params.delete("page");
+      router.replace(`/admin/clients?${params.toString()}`);
     }, 350);
-
     return () => clearTimeout(timeout);
   }, [query, router, searchParams]);
 
-  function statusHref(status?: LeadStatus) {
+  function statusHref(status?: ClientStatus) {
     const params = new URLSearchParams();
     if (status) params.set("status", status);
     if (currentCategory) params.set("category", currentCategory);
     if (currentQuery) params.set("q", currentQuery);
     const qs = params.toString();
-    return qs ? `/admin?${qs}` : "/admin";
+    return qs ? `/admin/clients?${qs}` : "/admin/clients";
   }
 
   function onCategoryChange(value: string) {
@@ -66,7 +60,7 @@ export function LeadFilters({
     if (value) params.set("category", value);
     else params.delete("category");
     params.delete("page");
-    router.replace(`/admin?${params.toString()}`);
+    router.replace(`/admin/clients?${params.toString()}`);
   }
 
   return (
@@ -75,14 +69,14 @@ export function LeadFilters({
         <FilterPill href={statusHref()} active={!currentStatus} count={totalCount}>
           All
         </FilterPill>
-        {STATUSES.map((status) => (
+        {CLIENT_STATUSES.map((status) => (
           <FilterPill
             key={status}
             href={statusHref(status)}
             active={currentStatus === status}
             count={counts[status]}
           >
-            {STATUS_LABELS[status]}
+            {CLIENT_STATUS_LABELS[status]}
           </FilterPill>
         ))}
       </div>
@@ -110,8 +104,8 @@ export function LeadFilters({
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, email or message"
-            aria-label="Search enquiries"
+            placeholder="Search name, company or email"
+            aria-label="Search clients"
             className="w-full rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] py-2 pl-9 pr-3 text-sm text-[var(--admin-fg)] outline-none transition placeholder:text-[var(--admin-fg-subtle)] focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25"
           />
           <svg

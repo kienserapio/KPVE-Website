@@ -9,6 +9,10 @@ const ACTION_LABELS: Record<string, string> = {
   "lead.created": "New enquiry received",
   "lead.updated": "Enquiry updated",
   "lead.deleted": "Enquiry deleted",
+  "client.created": "Client added",
+  "client.updated": "Client updated",
+  "client.deleted": "Client deleted",
+  "task.created": "Task added",
   "login.success": "Signed in",
   "login.failed": "Failed sign-in attempt",
   logout: "Signed out",
@@ -59,6 +63,13 @@ export default async function ActivityPage() {
                         className="text-[var(--admin-accent)] hover:underline"
                       >
                         View enquiry
+                      </Link>
+                    ) : item.entityType === "client" && item.entityId ? (
+                      <Link
+                        href={`/admin/clients/${item.entityId}`}
+                        className="text-[var(--admin-accent)] hover:underline"
+                      >
+                        View client
                       </Link>
                     ) : (
                       <span className="text-[var(--admin-fg-subtle)]">

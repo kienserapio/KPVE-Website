@@ -1,6 +1,11 @@
 import type { ReactNode, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
-import type { LeadStatus } from "@/lib/db/schema";
+import type {
+  LeadStatus,
+  ServiceCategory,
+  Priority,
+  ClientStatus,
+} from "@/lib/db/schema";
 
 /* ---------------------------------------------------------------------------
    Surfaces
@@ -57,14 +62,30 @@ export function StatCard({
 }
 
 /* ---------------------------------------------------------------------------
-   Status badge
+   Badges
+
+   Colour comes from CSS vars defined per theme in globals.css, so a badge stays
+   legible on both the light and dark admin surfaces. Tailwind's `dark:` variant
+   is not usable here — the admin theme is driven by `data-theme`.
 --------------------------------------------------------------------------- */
 
-/**
- * Colour comes from CSS vars defined per theme in globals.css, so the badge
- * stays legible on both the light and dark admin surfaces. Tailwind's `dark:`
- * variant is not usable here — the admin theme is driven by `data-theme`.
- */
+/** The shared colour-pill every status/priority badge is built from. */
+function ColorPill({ label, colorVar }: { label: string; colorVar: string }) {
+  const color = `var(${colorVar})`;
+  return (
+    <span
+      className="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset"
+      style={{
+        color,
+        backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+        ["--tw-ring-color" as string]: `color-mix(in srgb, ${color} 35%, transparent)`,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 const STATUS_VAR: Record<LeadStatus, string> = {
   new: "--st-new-fg",
   contacted: "--st-contacted-fg",
@@ -82,19 +103,106 @@ export const STATUS_LABELS: Record<LeadStatus, string> = {
 };
 
 export function StatusBadge({ status }: { status: LeadStatus }) {
-  const color = `var(${STATUS_VAR[status]})`;
+  return <ColorPill label={STATUS_LABELS[status]} colorVar={STATUS_VAR[status]} />;
+}
+
+/* ---- Service category ("what they want") ---- */
+
+export const CATEGORY_LABELS: Record<ServiceCategory, string> = {
+  general: "General",
+  design: "Design",
+  web_development: "Web Development",
+  hosting: "Hosting",
+  support: "Support",
+  business: "Business",
+  media: "Media",
+  social_media: "Social Media",
+};
+
+/** All eight, in display order — for filter bars and selects. */
+export const SERVICE_CATEGORIES: ServiceCategory[] = [
+  "general",
+  "design",
+  "web_development",
+  "hosting",
+  "support",
+  "business",
+  "media",
+  "social_media",
+];
+
+/**
+ * Category is a neutral tag, not a colour — eight coloured hues would turn the
+ * table into a rainbow and drown the signal from status and priority. A subtle
+ * outlined chip reads as metadata, which is what a category is.
+ */
+export function CategoryBadge({ category }: { category: ServiceCategory }) {
   return (
-    <span
-      className="inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset"
-      style={{
-        color,
-        backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
-        ["--tw-ring-color" as string]: `color-mix(in srgb, ${color} 35%, transparent)`,
-      }}
-    >
-      {STATUS_LABELS[status]}
+    <span className="inline-flex items-center whitespace-nowrap rounded-md border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-2 py-0.5 text-xs font-medium text-[var(--admin-fg-muted)]">
+      {CATEGORY_LABELS[category]}
     </span>
   );
+}
+
+/* ---- Priority ---- */
+
+const PRIORITY_VAR: Record<Priority, string> = {
+  high: "--pr-high-fg",
+  medium: "--pr-medium-fg",
+  low: "--pr-low-fg",
+};
+
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
+export const PRIORITIES: Priority[] = ["high", "medium", "low"];
+
+/** A coloured dot + label — compact enough to sit inline in a dense table. */
+export function PriorityBadge({ priority }: { priority: Priority }) {
+  const color = `var(${PRIORITY_VAR[priority]})`;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-[var(--admin-fg-muted)]">
+      <span
+        aria-hidden
+        className="size-2 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+      {PRIORITY_LABELS[priority]}
+    </span>
+  );
+}
+
+/* ---- Client status ---- */
+
+const CLIENT_STATUS_VAR: Record<ClientStatus, string> = {
+  prospect: "--cs-prospect-fg",
+  active: "--cs-active-fg",
+  on_hold: "--cs-on-hold-fg",
+  completed: "--cs-completed-fg",
+  churned: "--cs-churned-fg",
+};
+
+export const CLIENT_STATUS_LABELS: Record<ClientStatus, string> = {
+  prospect: "Prospect",
+  active: "Active",
+  on_hold: "On hold",
+  completed: "Completed",
+  churned: "Churned",
+};
+
+export const CLIENT_STATUSES: ClientStatus[] = [
+  "prospect",
+  "active",
+  "on_hold",
+  "completed",
+  "churned",
+];
+
+export function ClientStatusBadge({ status }: { status: ClientStatus }) {
+  return <ColorPill label={CLIENT_STATUS_LABELS[status]} colorVar={CLIENT_STATUS_VAR[status]} />;
 }
 
 /* ---------------------------------------------------------------------------

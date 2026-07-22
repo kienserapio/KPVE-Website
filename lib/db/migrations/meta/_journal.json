@@ -8,6 +8,13 @@
       "when": 1784602583573,
       "tag": "0000_loud_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784693669278,
+      "tag": "0001_naive_magdalene",
+      "breakpoints": true
     }
   ]
 }

@@ -62,20 +62,117 @@ export const leadStatusSchema = z.enum([
   "archived",
 ]);
 
+export const serviceCategorySchema = z.enum([
+  "general",
+  "design",
+  "web_development",
+  "hosting",
+  "support",
+  "business",
+  "media",
+  "social_media",
+]);
+
+export const prioritySchema = z.enum(["low", "medium", "high"]);
+
+export const clientStatusSchema = z.enum([
+  "prospect",
+  "active",
+  "on_hold",
+  "completed",
+  "churned",
+]);
+
+/** "" (unassigned select) → null; a real UUID → that UUID. */
+const optionalStaffId = z
+  .string()
+  .uuid()
+  .nullable()
+  .optional()
+  .or(z.literal("").transform(() => null));
+
 export const updateLeadSchema = z.object({
   leadId: z.string().uuid(),
   status: leadStatusSchema.optional(),
+  category: serviceCategorySchema.optional(),
+  priority: prioritySchema.optional(),
   internalNotes: z.string().max(10000).optional(),
-  assignedStaffId: z
-    .string()
-    .uuid()
-    .nullable()
-    .optional()
-    .or(z.literal("").transform(() => null)),
+  assignedStaffId: optionalStaffId,
 });
 
 export const leadFiltersSchema = z.object({
   status: leadStatusSchema.optional(),
+  category: serviceCategorySchema.optional(),
   q: z.string().trim().max(200).optional(),
   page: z.coerce.number().int().min(1).default(1),
+});
+
+/* ---------------------------------------------------------------------------
+   Clients
+--------------------------------------------------------------------------- */
+
+// "" → undefined so an empty optional field clears rather than storing "".
+const emptyToUndefined = z
+  .string()
+  .trim()
+  .optional()
+  .or(z.literal("").transform(() => undefined));
+
+export const createClientSchema = z.object({
+  name: z.string().trim().min(1, "Name is required").max(200, "Name is too long"),
+  company: emptyToUndefined.pipe(z.string().max(200).optional()),
+  email: z
+    .string()
+    .trim()
+    .min(1, "Email is required")
+    .max(255, "Email is too long")
+    .email("Enter a valid email address")
+    .transform(normalizeEmail),
+  phone: emptyToUndefined.pipe(z.string().max(50).optional()),
+  category: serviceCategorySchema.default("general"),
+  status: clientStatusSchema.default("active"),
+  value: emptyToUndefined.pipe(z.string().max(200).optional()),
+  assignedStaffId: optionalStaffId,
+  notes: z.string().max(10000).optional(),
+});
+
+export const updateClientSchema = z.object({
+  clientId: z.string().uuid(),
+  name: z.string().trim().min(1, "Name is required").max(200).optional(),
+  company: emptyToUndefined.pipe(z.string().max(200).optional()),
+  email: z
+    .string()
+    .trim()
+    .max(255)
+    .email("Enter a valid email address")
+    .transform(normalizeEmail)
+    .optional(),
+  phone: emptyToUndefined.pipe(z.string().max(50).optional()),
+  category: serviceCategorySchema.optional(),
+  status: clientStatusSchema.optional(),
+  value: emptyToUndefined.pipe(z.string().max(200).optional()),
+  assignedStaffId: optionalStaffId,
+  notes: z.string().max(10000).optional(),
+});
+
+export const clientFiltersSchema = z.object({
+  status: clientStatusSchema.optional(),
+  category: serviceCategorySchema.optional(),
+  q: z.string().trim().max(200).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+});
+
+export const createTaskSchema = z.object({
+  clientId: z.string().uuid(),
+  title: z.string().trim().min(1, "Task can't be empty").max(500, "Task is too long"),
+  // datetime-local sends "YYYY-MM-DDTHH:mm" with no zone; "" means no due date.
+  dueAt: z
+    .string()
+    .trim()
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+});
+
+export const convertLeadSchema = z.object({
+  leadId: z.string().uuid(),
 });

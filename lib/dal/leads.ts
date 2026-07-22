@@ -3,7 +3,14 @@ import "server-only";
 import { and, count, desc, eq, ilike, or, gte } from "drizzle-orm";
 
 import { db } from "@/lib/db";
-import { leads, staffUsers, type LeadStatus } from "@/lib/db/schema";
+import {
+  clients,
+  leads,
+  staffUsers,
+  type LeadStatus,
+  type ServiceCategory,
+  type Priority,
+} from "@/lib/db/schema";
 import { requireSession } from "./session";
 import { logActivity } from "./activity";
 
@@ -18,6 +25,8 @@ export type LeadListItem = {
   message: string;
   source: string;
   status: LeadStatus;
+  category: ServiceCategory;
+  priority: Priority;
   assignedStaffName: string | null;
   createdAt: Date;
 };
@@ -72,6 +81,7 @@ export async function createLead(input: {
 
 export async function listLeads(filters: {
   status?: LeadStatus;
+  category?: ServiceCategory;
   q?: string;
   page?: number;
 }): Promise<{ items: LeadListItem[]; total: number; page: number; pageCount: number }> {
@@ -81,6 +91,7 @@ export async function listLeads(filters: {
 
   const conditions = [];
   if (filters.status) conditions.push(eq(leads.status, filters.status));
+  if (filters.category) conditions.push(eq(leads.category, filters.category));
   if (filters.q) {
     // Drizzle parameterizes these — the value is never concatenated into SQL.
     const term = `%${filters.q}%`;
@@ -106,6 +117,8 @@ export async function listLeads(filters: {
         message: leads.message,
         source: leads.source,
         status: leads.status,
+        category: leads.category,
+        priority: leads.priority,
         assignedStaffName: staffUsers.name,
         createdAt: leads.createdAt,
       })
@@ -139,6 +152,8 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
       message: leads.message,
       source: leads.source,
       status: leads.status,
+      category: leads.category,
+      priority: leads.priority,
       assignedStaffId: leads.assignedStaffId,
       assignedStaffName: staffUsers.name,
       internalNotes: leads.internalNotes,
@@ -157,6 +172,7 @@ export type LeadStats = {
   total: number;
   newCount: number;
   thisWeek: number;
+  highPriorityOpen: number;
   byStatus: Record<LeadStatus, number>;
 };
 
@@ -165,14 +181,27 @@ export async function getLeadStats(): Promise<LeadStats> {
 
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  const [statusRows, [{ total }], [{ thisWeek }]] = await Promise.all([
-    db.select({ status: leads.status, n: count() }).from(leads).groupBy(leads.status),
-    db.select({ total: count() }).from(leads),
-    db
-      .select({ thisWeek: count() })
-      .from(leads)
-      .where(gte(leads.createdAt, weekAgo)),
-  ]);
+  const [statusRows, [{ total }], [{ thisWeek }], [{ highPriorityOpen }]] =
+    await Promise.all([
+      db.select({ status: leads.status, n: count() }).from(leads).groupBy(leads.status),
+      db.select({ total: count() }).from(leads),
+      db.select({ thisWeek: count() }).from(leads).where(gte(leads.createdAt, weekAgo)),
+      // "Open" = still in the pipeline, not won or shelved. High priority here is
+      // the "chase these first" number a CRM dashboard should lead with.
+      db
+        .select({ highPriorityOpen: count() })
+        .from(leads)
+        .where(
+          and(
+            eq(leads.priority, "high"),
+            or(
+              eq(leads.status, "new"),
+              eq(leads.status, "contacted"),
+              eq(leads.status, "qualified"),
+            ),
+          ),
+        ),
+    ]);
 
   const byStatus = {
     new: 0,
@@ -183,7 +212,7 @@ export async function getLeadStats(): Promise<LeadStats> {
   } as Record<LeadStatus, number>;
   for (const row of statusRows) byStatus[row.status] = row.n;
 
-  return { total, newCount: byStatus.new, thisWeek, byStatus };
+  return { total, newCount: byStatus.new, thisWeek, highPriorityOpen, byStatus };
 }
 
 /* ---------------------------------------------------------------------------
@@ -194,6 +223,8 @@ export async function updateLead(
   id: string,
   patch: {
     status?: LeadStatus;
+    category?: ServiceCategory;
+    priority?: Priority;
     internalNotes?: string;
     assignedStaffId?: string | null;
   },
@@ -204,6 +235,8 @@ export async function updateLead(
     .update(leads)
     .set({
       ...(patch.status !== undefined ? { status: patch.status } : {}),
+      ...(patch.category !== undefined ? { category: patch.category } : {}),
+      ...(patch.priority !== undefined ? { priority: patch.priority } : {}),
       ...(patch.internalNotes !== undefined
         ? { internalNotes: patch.internalNotes }
         : {}),
@@ -225,6 +258,57 @@ export async function updateLead(
     action: "lead.updated",
     metadata: { changed: Object.keys(patch) },
   });
+}
+
+/**
+ * Promote a won lead into a client. Copies contact details across (so later
+ * edits to the client don't rewrite the enquiry), marks the lead converted,
+ * and links the two. Returns the new client id.
+ *
+ * Idempotent-ish: if a client already points at this lead, we return it rather
+ * than minting a duplicate — a double-clicked button shouldn't fork the record.
+ */
+export async function convertLeadToClient(leadId: string): Promise<{ clientId: string }> {
+  const staff = await requireSession();
+
+  const [existing] = await db
+    .select({ id: clients.id })
+    .from(clients)
+    .where(eq(clients.sourceLeadId, leadId))
+    .limit(1);
+  if (existing) return { clientId: existing.id };
+
+  const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  if (!lead) throw new Error("NOT_FOUND");
+
+  const [client] = await db
+    .insert(clients)
+    .values({
+      name: `${lead.firstName} ${lead.lastName}`.trim(),
+      email: lead.email,
+      phone: lead.phone,
+      category: lead.category,
+      status: "active",
+      assignedStaffId: lead.assignedStaffId,
+      sourceLeadId: lead.id,
+    })
+    .returning({ id: clients.id });
+
+  await db
+    .update(leads)
+    .set({ status: "converted", updatedAt: new Date() })
+    .where(eq(leads.id, leadId));
+
+  await logActivity({
+    actorType: "staff",
+    actorId: staff.id,
+    entityType: "client",
+    entityId: client.id,
+    action: "client.created",
+    metadata: { fromLeadId: leadId, via: "conversion" },
+  });
+
+  return { clientId: client.id };
 }
 
 export async function deleteLead(id: string): Promise<void> {

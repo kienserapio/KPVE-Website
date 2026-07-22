@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 
 import { requireSession } from "@/lib/dal/session";
-import { updateLead, deleteLead } from "@/lib/dal/leads";
-import { updateLeadSchema } from "@/lib/validation";
+import { updateLead, deleteLead, convertLeadToClient } from "@/lib/dal/leads";
+import { updateLeadSchema, convertLeadSchema } from "@/lib/validation";
 
 export type LeadActionState = { ok: boolean; error: string | null };
 
@@ -20,6 +21,8 @@ export async function updateLeadAction(
   const parsed = updateLeadSchema.safeParse({
     leadId: formData.get("leadId"),
     status: formData.get("status") || undefined,
+    category: formData.get("category") || undefined,
+    priority: formData.get("priority") || undefined,
     internalNotes: formData.get("internalNotes") ?? undefined,
     assignedStaffId: formData.get("assignedStaffId") ?? undefined,
   });
@@ -69,6 +72,31 @@ export async function deleteLeadAction(
 
   revalidatePath("/admin");
   return { ok: true, error: null };
+}
+
+/**
+ * Convert a lead into a client, then send the user straight to the new client.
+ * A plain form action: redirect() must be thrown outside the try/catch, since
+ * Next signals navigation by throwing and we mustn't swallow it.
+ */
+export async function convertLeadToClientAction(formData: FormData): Promise<void> {
+  const parsed = convertLeadSchema.safeParse({ leadId: formData.get("leadId") });
+  if (!parsed.success) return;
+
+  let clientId: string;
+  try {
+    await requireSession();
+    ({ clientId } = await convertLeadToClient(parsed.data.leadId));
+  } catch (error) {
+    console.error("[convertLeadToClientAction]", error);
+    // Fall back to the lead it came from rather than a dead end.
+    redirect(`/admin/leads/${parsed.data.leadId}`);
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/clients");
+  revalidatePath(`/admin/leads/${parsed.data.leadId}`);
+  redirect(`/admin/clients/${clientId}`);
 }
 
 export async function setThemeAction(theme: "light" | "dark"): Promise<void> {

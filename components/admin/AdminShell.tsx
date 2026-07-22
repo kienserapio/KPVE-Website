@@ -11,6 +11,7 @@ import type { SessionStaff } from "@/lib/dal/session";
 
 const NAV = [
   { href: "/admin", label: "Enquiries", exact: true },
+  { href: "/admin/clients", label: "Clients", exact: false },
   { href: "/admin/activity", label: "Activity", exact: false },
 ];
 

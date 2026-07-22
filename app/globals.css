@@ -232,6 +232,18 @@ body {
   --st-converted-fg: #6ee7b7;
   --st-archived-fg: #a3a3a3;
 
+  /* Triage priority */
+  --pr-high-fg: #fca5a5;
+  --pr-medium-fg: #fcd34d;
+  --pr-low-fg: #a3a3a3;
+
+  /* Client lifecycle */
+  --cs-prospect-fg: #93c5fd;
+  --cs-active-fg: #6ee7b7;
+  --cs-on-hold-fg: #fbbf24;
+  --cs-completed-fg: #7dd3fc;
+  --cs-churned-fg: #a3a3a3;
+
   color-scheme: dark;
 }
 
@@ -256,6 +268,16 @@ body {
   --st-qualified-fg: #6d28d9;
   --st-converted-fg: #047857;
   --st-archived-fg: #57534e;
+
+  --pr-high-fg: #b91c1c;
+  --pr-medium-fg: #92620a;
+  --pr-low-fg: #57534e;
+
+  --cs-prospect-fg: #1d4ed8;
+  --cs-active-fg: #047857;
+  --cs-on-hold-fg: #b45309;
+  --cs-completed-fg: #0369a1;
+  --cs-churned-fg: #57534e;
 
   color-scheme: light;
 }
