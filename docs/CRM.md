@@ -25,9 +25,15 @@ every active session out.
 | `/` `/about` `/services` `/contact` … | Public, static | Marketing site, unchanged |
 | `POST /api/contact` | Public | Validates and stores an enquiry |
 | `/login` | Public | Staff sign-in |
-| `/admin` | Staff | Enquiry list, filters, search, stats |
-| `/admin/leads/[id]` | Staff | Detail — status, assignment, internal notes |
+| `/admin` | Staff | Overview — revenue, pipeline, tasks due |
+| `/admin/enquiries` · `/admin/leads/[id]` | Staff | Enquiry list and detail |
+| `/admin/clients` · `/admin/clients/[id]` | Staff | Clients, billing, tasks, timeline, documents |
+| `/admin/services` | Staff | Billable catalogue + onboarding checklists |
+| `/admin/revenue` | Staff | MRR history, collected vs outstanding, payments |
 | `/admin/activity` | Staff | Audit trail |
+| `/pay/[ref]` | Public, unlisted | Simulated checkout — the link a client is sent |
+| `/pay/complete` · `/pay/cancelled` | Public | Where Stripe returns the client |
+| `POST /api/stripe/webhook` | Signature-gated | Records payments. No session; the HMAC is the authorization |
 
 Marketing pages stay statically prerendered. Only admin routes are dynamic, because
 they read the session cookie.
@@ -62,6 +68,17 @@ a forged session cookie gets past proxy and is then rejected by the DAL.
   is the only way an account is created. No `role` column yet — there is one entity type
   and nothing to permission.
 - **`leads`** — enquiries. `source` records which page produced it.
+- **`clients`** — a won enquiry, promoted. Contact details copied at conversion.
+- **`services`** — the billable catalogue, staff-created. `client_services` — one billable
+  line on a client; amount/currency/interval are copied at attach time so repricing the
+  catalogue never reprices existing clients.
+- **`payments`** — every attempt to take money. `provider_ref` is UNIQUE: that index, not
+  the code around it, is what makes a retried webhook idempotent.
+- **`client_notes`** / **`client_documents`** — relationship timeline and document links.
+- **`service_task_templates`** — a service's onboarding checklist, copied onto a client as
+  dated tasks when the service is attached.
+- **`revenue_snapshots`** — one row per month per currency. The live tables only describe
+  *now*; this is what makes "MRR last month" answerable.
 - **`activity_log`** — audit trail. Generic `entityType`/`entityId` so future entities
   log through it without a schema change.
 
@@ -81,6 +98,10 @@ a forged session cookie gets past proxy and is then rejected by the DAL.
 | Honeypot, checked before validation so bots get no signal | `app/api/contact/route.ts` |
 | Body size cap, UUID format check before DB lookup | route + page |
 | `import "server-only"` on db/dal/auth | throughout |
+| Webhook HMAC verified on the **raw** body, timing-safe, 5-min replay window | `lib/payments/stripe.ts` |
+| Payment refs are 32 hex chars — a checkout link is a credential | `lib/payments/mock.ts` |
+| Document links restricted to `http:`/`https:` (no `javascript:`) | `lib/validation.ts` |
+| Simulator refuses any ref that isn't `mock_` — it can't settle a real invoice | `lib/dal/payments.ts` |
 
 The rate limiter is per-instance and in-memory. On Vercel each lambda holds its own
 counter, so the effective limit is looser than the number suggests. That is fine for a
@@ -96,6 +117,41 @@ a submission that wasn't stored — that was the original bug.
 is checked *before* validation so the response is identical no matter what else is in
 the body. Returning a validation error naming the field would tell a bot exactly what
 caught it.
+
+## Payments
+
+One interface, two implementations (`lib/payments/`): `mock` runs by default, `stripe`
+runs the moment `STRIPE_SECRET_KEY` exists. Nothing above that layer knows which is live.
+
+```
+staff clicks "Payment link"  →  provider.createCheckout()  →  link stored on the line
+client pays                  →  webhook | simulator        →  applyPaymentSucceeded()
+```
+
+`applyPaymentSucceeded()` is the only path that moves a service to `active`. Both the
+Stripe webhook and the simulated `/pay/[ref]` page call it, so the flow being exercised
+today is the one that runs when a real card clears — flip the keys and the behaviour is
+already proven. Nobody sets "paid" by hand; the ledger and the status can't disagree.
+
+**Going live** is two environment variables and a dashboard entry — no code change:
+
+1. `STRIPE_SECRET_KEY` (Stripe → Developers → API keys)
+2. `STRIPE_WEBHOOK_SECRET`, from an endpoint registered at
+   `<NEXT_PUBLIC_APP_URL>/api/stripe/webhook` subscribed to
+   `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`,
+   `customer.subscription.deleted`
+3. Locally: `stripe listen --forward-to localhost:3000/api/stripe/webhook`
+
+Keys without the webhook secret means links work and payments are never recorded — the
+Revenue page warns when it sees that combination. There is no `stripe` npm dependency;
+the three calls needed are plain `fetch` against a pinned API version.
+
+## Revenue history
+
+`revenue_snapshots` is written by `npm run revenue:snapshot` (cron it daily) and by the
+first Revenue page view of the day. Months without a snapshot are reconstructed from
+service start/cancel dates and drawn as outlined bars — a reconstruction can't see a
+pause or a mid-month reprice, so it is never presented as a recorded number.
 
 ## Theme
 

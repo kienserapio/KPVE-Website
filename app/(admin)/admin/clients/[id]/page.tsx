@@ -11,9 +11,13 @@ import {
   Card,
   CategoryBadge,
   ClientStatusBadge,
+  Money,
+  PaymentStatusBadge,
 } from "@/components/admin/ui";
 import { ClientEditor } from "@/components/admin/ClientEditor";
 import { ClientTasks } from "@/components/admin/ClientTasks";
+import { ClientNotes } from "@/components/admin/ClientNotes";
+import { ClientDocuments } from "@/components/admin/ClientDocuments";
 import {
   ClientServices,
   RevenueSummaryStrip,
@@ -42,6 +46,12 @@ export default async function ClientDetailPage({
   const openTasks = client.tasks.filter((t) => !t.done).length;
   const activeServices = client.services.filter((s) => s.status === "active");
   const headline = primaryTotal(client.revenue);
+
+  // Cash actually taken from this client. Only succeeded payments in the
+  // headline currency — money in two currencies is two numbers, not one.
+  const collected = client.payments
+    .filter((p) => p.status === "succeeded" && p.currency === headline.currency)
+    .reduce((sum, p) => sum + p.amountCents, 0);
 
   // The soonest thing to bill — the one date worth putting in the header.
   const nextBill = activeServices
@@ -126,11 +136,45 @@ export default async function ClientDetailPage({
             <div className="mt-5">
               <ClientServices
                 clientId={client.id}
+                clientName={client.name}
+                clientEmail={client.email}
                 services={client.services}
                 catalogue={catalogue}
               />
             </div>
           </Card>
+
+          {client.payments.length > 0 && (
+            <Card className="p-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  Payments
+                </h2>
+                <span className="text-xs text-[var(--admin-fg-subtle)]">
+                  {formatMoney(collected, headline.currency)} collected
+                </span>
+              </div>
+              <ul className="mt-4 flex flex-col divide-y divide-[var(--admin-border)]">
+                {client.payments.map((payment) => (
+                  <li
+                    key={payment.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0"
+                  >
+                    <PaymentStatusBadge status={payment.status} />
+                    <span className="min-w-0 flex-1 truncate text-sm text-[var(--admin-fg)]">
+                      {payment.description ?? "Payment"}
+                    </span>
+                    <span className="text-xs text-[var(--admin-fg-subtle)]">
+                      {formatDate(payment.paidAt ?? payment.createdAt)}
+                    </span>
+                    <Money className="text-sm font-medium">
+                      {formatMoney(payment.amountCents, payment.currency)}
+                    </Money>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
 
           <Card className="p-6">
             <div className="flex items-center justify-between">
@@ -146,9 +190,30 @@ export default async function ClientDetailPage({
             </div>
           </Card>
 
+          <Card className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  Timeline
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                  Calls, meetings and updates — dated and attributed.
+                </p>
+              </div>
+              <span className="text-xs text-[var(--admin-fg-subtle)]">
+                {client.timeline.length}{" "}
+                {client.timeline.length === 1 ? "entry" : "entries"}
+              </span>
+            </div>
+            <div className="mt-4">
+              <ClientNotes clientId={client.id} entries={client.timeline} />
+            </div>
+          </Card>
+
           <ClientEditor client={client} staffOptions={staffOptions} />
         </div>
 
+        <div className="flex flex-col gap-6">
         <Card className="h-fit p-6">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
             Contact
@@ -216,6 +281,19 @@ export default async function ClientDetailPage({
             Reply by email
           </a>
         </Card>
+
+        <Card className="h-fit p-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+            Documents
+          </h2>
+          <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+            Contract, brief, signed quote — linked, not uploaded.
+          </p>
+          <div className="mt-4">
+            <ClientDocuments clientId={client.id} documents={client.documents} />
+          </div>
+        </Card>
+        </div>
       </div>
     </div>
   );

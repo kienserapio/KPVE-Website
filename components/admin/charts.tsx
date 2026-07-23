@@ -1,5 +1,6 @@
 import type { TimePoint, CategoryCount } from "@/lib/dal/dashboard";
 import type { ServiceRevenue } from "@/lib/dal/services";
+import type { RevenuePoint } from "@/lib/dal/revenue";
 import type { LeadStatus } from "@/lib/db/schema";
 import { formatMoney } from "@/lib/billing";
 import { CATEGORY_LABELS, STATUS_LABELS } from "./ui";
@@ -145,6 +146,76 @@ export function RevenueBars({ data }: { data: ServiceRevenue[] }) {
         Per month. Weekly lines are counted at 52/12, annual at 1/12.
       </p>
     </div>
+  );
+}
+
+/**
+ * MRR month by month.
+ *
+ * Recorded months are solid; reconstructed ones are outlined, because the two
+ * are not the same claim. A snapshot is what MRR was; an estimate is what the
+ * start and cancel dates imply it was, and it can't see a pause or a mid-month
+ * reprice. Drawing them identically would launder a guess into a fact.
+ */
+export function MrrTrend({ points }: { points: RevenuePoint[] }) {
+  const max = Math.max(1, ...points.map((p) => p.mrrCents));
+  const hasEstimates = points.some((p) => !p.recorded);
+  const currency = points[0]?.currency ?? "AUD";
+
+  return (
+    <figure className="m-0">
+      <div
+        className="flex h-44 items-end gap-1.5"
+        role="img"
+        aria-label={`Monthly recurring revenue, last ${points.length} months`}
+      >
+        {points.map((point) => {
+          const pct = point.mrrCents === 0 ? 0 : Math.max(3, (point.mrrCents / max) * 100);
+          return (
+            <div key={point.period} className="flex flex-1 flex-col items-center gap-1.5">
+              <span className="text-[10px] font-medium tabular-nums text-[var(--admin-fg-muted)]">
+                {point.mrrCents > 0 ? formatMoney(point.mrrCents, currency) : ""}
+              </span>
+              <div className="flex w-full flex-1 items-end">
+                <div
+                  title={`${point.label}: ${formatMoney(point.mrrCents, currency)}${
+                    point.recorded ? "" : " (estimated)"
+                  }`}
+                  className={
+                    point.recorded
+                      ? "w-full rounded-t bg-[var(--admin-accent)]"
+                      : "w-full rounded-t border border-dashed border-[var(--admin-accent)] bg-[var(--admin-accent)]/15"
+                  }
+                  style={{ height: `${pct}%`, minHeight: point.mrrCents > 0 ? 4 : 0 }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 flex gap-1.5">
+        {points.map((point) => (
+          <span
+            key={point.period}
+            className="flex-1 text-center text-[10px] text-[var(--admin-fg-subtle)]"
+          >
+            {point.label}
+          </span>
+        ))}
+      </div>
+
+      {hasEstimates && (
+        <figcaption className="mt-3 flex items-center gap-2 text-[11px] text-[var(--admin-fg-subtle)]">
+          <span
+            aria-hidden
+            className="inline-block size-3 rounded-sm border border-dashed border-[var(--admin-accent)] bg-[var(--admin-accent)]/15"
+          />
+          Estimated from service start and cancel dates. Solid bars are recorded
+          snapshots — every month from here on gets one.
+        </figcaption>
+      )}
+    </figure>
   );
 }
 

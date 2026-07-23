@@ -12,9 +12,11 @@ import {
   updateClientService,
   updateService,
 } from "@/lib/dal/services";
+import { addTaskTemplate, deleteTaskTemplate } from "@/lib/dal/checklists";
 import {
   createClientServiceSchema,
   createServiceSchema,
+  createTaskTemplateSchema,
   updateClientServiceSchema,
   updateServiceSchema,
 } from "@/lib/validation";
@@ -138,6 +140,49 @@ export async function deleteServiceAction(formData: FormData): Promise<void> {
     revalidatePath("/admin/services");
   } catch (error) {
     console.error("[deleteServiceAction]", error);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Onboarding checklists — a service's steps, copied onto a client on attach
+--------------------------------------------------------------------------- */
+
+export async function addTaskTemplateAction(
+  _prev: ServiceActionState,
+  formData: FormData,
+): Promise<ServiceActionState> {
+  const parsed = createTaskTemplateSchema.safeParse({
+    serviceId: formData.get("serviceId"),
+    title: formData.get("title"),
+    offsetDays: formData.get("offsetDays") || 0,
+  });
+
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Couldn't add that step.");
+  }
+
+  try {
+    await requireSession();
+    await addTaskTemplate(parsed.data);
+  } catch (error) {
+    console.error("[addTaskTemplateAction]", error);
+    return fail(mapError(error));
+  }
+
+  revalidatePath("/admin/services");
+  return { ok: true, error: null };
+}
+
+export async function deleteTaskTemplateAction(formData: FormData): Promise<void> {
+  const templateId = String(formData.get("templateId") ?? "");
+  if (!templateId) return;
+
+  try {
+    await requireSession();
+    await deleteTaskTemplate(templateId);
+    revalidatePath("/admin/services");
+  } catch (error) {
+    console.error("[deleteTaskTemplateAction]", error);
   }
 }
 

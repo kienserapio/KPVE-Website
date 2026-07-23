@@ -7,6 +7,7 @@ import {
   clients,
   clientServices,
   services,
+  serviceTaskTemplates,
   type BillingInterval,
   type ClientServiceStatus,
 } from "@/lib/db/schema";
@@ -18,6 +19,7 @@ import {
 } from "@/lib/billing";
 import { requireSession } from "./session";
 import { logActivity } from "./activity";
+import { applyChecklist } from "./checklists";
 
 /* ---------------------------------------------------------------------------
    The catalogue — what KPVE sells. Staff-managed, so adding "Emails, $11/mo"
@@ -35,6 +37,8 @@ export type ServiceItem = {
   isActive: boolean;
   /** How many clients are on this service right now — drives "in use" copy. */
   activeClients: number;
+  /** Onboarding checklist size, so the row can say "5-step checklist". */
+  checklistItems: number;
   createdAt: Date;
 };
 
@@ -56,6 +60,11 @@ const activeClientsExpr = sql<number>`(
     and ${clientServices.status} = 'active'
 )`;
 
+const checklistItemsExpr = sql<number>`(
+  select count(*)::int from ${serviceTaskTemplates}
+  where ${serviceTaskTemplates.serviceId} = ${services.id}
+)`;
+
 export async function listServices(
   options: { includeInactive?: boolean } = {},
 ): Promise<ServiceItem[]> {
@@ -72,6 +81,7 @@ export async function listServices(
       defaultInterval: services.defaultInterval,
       isActive: services.isActive,
       activeClients: activeClientsExpr,
+      checklistItems: checklistItemsExpr,
       createdAt: services.createdAt,
     })
     .from(services)
@@ -216,6 +226,12 @@ export type ClientServiceItem = {
   notes: string | null;
   /** Computed server-side so the client component never calls Date.now(). */
   overdue: boolean;
+  /* Payment-link state — see lib/dal/payments.ts. */
+  checkoutUrl: string | null;
+  checkoutCreatedAt: Date | null;
+  paymentProvider: string | null;
+  lastPaymentAt: Date | null;
+  externalSubscriptionId: string | null;
   createdAt: Date;
 };
 
@@ -234,6 +250,11 @@ export async function listClientServices(clientId: string): Promise<ClientServic
       startedAt: clientServices.startedAt,
       nextBillAt: clientServices.nextBillAt,
       notes: clientServices.notes,
+      checkoutUrl: clientServices.checkoutUrl,
+      checkoutCreatedAt: clientServices.checkoutCreatedAt,
+      paymentProvider: clientServices.paymentProvider,
+      lastPaymentAt: clientServices.lastPaymentAt,
+      externalSubscriptionId: clientServices.externalSubscriptionId,
       createdAt: clientServices.createdAt,
     })
     .from(clientServices)
@@ -270,7 +291,7 @@ export async function addClientService(input: {
   status: ClientServiceStatus;
   startedAt?: Date;
   notes?: string;
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; tasksCreated: number }> {
   const staff = await requireSession();
 
   // Guard the FK so a stale client id is a 404, not a 500.
@@ -302,6 +323,17 @@ export async function addClientService(input: {
 
   await touchClient(input.clientId);
 
+  // Onboarding checklist: attaching a service creates the things we owe them.
+  // Only for a catalogue service — a bespoke line has no template behind it.
+  const tasksCreated = input.serviceId
+    ? await applyChecklist({
+        clientId: input.clientId,
+        serviceId: input.serviceId,
+        startedAt,
+        createdBy: staff.id,
+      })
+    : 0;
+
   await logActivity({
     actorType: "staff",
     actorId: staff.id,
@@ -314,10 +346,11 @@ export async function addClientService(input: {
       amountCents: input.amountCents,
       currency: input.currency,
       interval: input.interval,
+      tasksCreated,
     },
   });
 
-  return row;
+  return { ...row, tasksCreated };
 }
 
 export async function updateClientService(

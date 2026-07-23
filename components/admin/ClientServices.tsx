@@ -10,6 +10,11 @@ import {
   updateClientServiceAction,
   type ServiceActionState,
 } from "@/lib/actions/services";
+import {
+  createPaymentLinkAction,
+  revokePaymentLinkAction,
+  type PaymentActionState,
+} from "@/lib/actions/payments";
 import type { ClientServiceItem, ServiceItem } from "@/lib/dal/services";
 import {
   BILLING_INTERVALS,
@@ -51,10 +56,14 @@ function dateInputValue(date: Date | null): string {
 
 export function ClientServices({
   clientId,
+  clientName,
+  clientEmail,
   services,
   catalogue,
 }: {
   clientId: string;
+  clientName: string;
+  clientEmail: string;
   services: ClientServiceItem[];
   catalogue: ServiceItem[];
 }) {
@@ -75,6 +84,9 @@ export function ClientServices({
               <ServiceRow
                 key={line.id}
                 line={line}
+                clientId={clientId}
+                clientName={clientName}
+                clientEmail={clientEmail}
                 onEdit={() => setEditingId(line.id)}
               />
             ),
@@ -104,7 +116,19 @@ export function ClientServices({
    One line
 --------------------------------------------------------------------------- */
 
-function ServiceRow({ line, onEdit }: { line: ClientServiceItem; onEdit: () => void }) {
+function ServiceRow({
+  line,
+  clientId,
+  clientName,
+  clientEmail,
+  onEdit,
+}: {
+  line: ClientServiceItem;
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  onEdit: () => void;
+}) {
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const dimmed = line.status === "cancelled";
 
@@ -129,10 +153,22 @@ function ServiceRow({ line, onEdit }: { line: ClientServiceItem; onEdit: () => v
             </span>
           )}
           {line.startedAt && <span>· Started {formatDate(line.startedAt)}</span>}
+          {line.lastPaymentAt && (
+            <span className="text-[var(--svc-active-fg)]">
+              · Paid {formatDate(line.lastPaymentAt)}
+            </span>
+          )}
         </div>
         {line.notes && (
           <p className="mt-1 text-xs text-[var(--admin-fg-muted)]">{line.notes}</p>
         )}
+
+        <PaymentLink
+          line={line}
+          clientId={clientId}
+          clientName={clientName}
+          clientEmail={clientEmail}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -190,6 +226,125 @@ function ServiceRow({ line, onEdit }: { line: ClientServiceItem; onEdit: () => v
         )}
       </div>
     </li>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Payment link
+
+   The cheapest path to actually taking money: mint a link for this line, copy
+   it or email it, and let the webhook (or the simulator) flip the line to
+   Active when it clears. Nobody sets "paid" by hand — that's the whole point.
+--------------------------------------------------------------------------- */
+
+const paymentInitialState: PaymentActionState = { ok: false, error: null };
+
+function PaymentLink({
+  line,
+  clientId,
+  clientName,
+  clientEmail,
+}: {
+  line: ClientServiceItem;
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+}) {
+  const [state, formAction, pending] = useActionState(
+    createPaymentLinkAction,
+    paymentInitialState,
+  );
+  const [copied, setCopied] = useState(false);
+
+  // Prefer the URL the action just returned — the server component behind this
+  // may not have re-rendered yet, and a stale "no link" state after clicking
+  // "Payment link" reads as a failure.
+  const url = state.url ?? line.checkoutUrl;
+  const simulated = state.simulated ?? line.paymentProvider !== "stripe";
+
+  if (line.status === "cancelled") return null;
+
+  async function copy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard is blocked on insecure origins and in some browsers. The URL
+      // is on screen and selectable, so this needs no error state of its own.
+    }
+  }
+
+  const mailto = url
+    ? `mailto:${encodeURIComponent(clientEmail)}?subject=${encodeURIComponent(
+        `Payment link — ${line.label}`,
+      )}&body=${encodeURIComponent(
+        `Hi ${clientName.split(" ")[0] || "there"},\n\n` +
+          `Here's the payment link for ${line.label} — ${formatRate(
+            line.amountCents,
+            line.currency,
+            line.interval,
+          )}:\n\n${url}\n\nThanks,\nKPVE`,
+      )}`
+    : "";
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {url ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-[var(--admin-border)] bg-[var(--admin-surface-2)] px-2 py-1.5 text-[11px] text-[var(--admin-fg-muted)]">
+              {url}
+            </code>
+            <button
+              type="button"
+              onClick={copy}
+              className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <a
+              href={mailto}
+              className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+            >
+              Email it
+            </a>
+            <form action={revokePaymentLinkAction}>
+              <input type="hidden" name="clientServiceId" value={line.id} />
+              <button
+                type="submit"
+                className="rounded-lg px-2 py-1.5 text-xs text-[var(--admin-fg-subtle)] transition hover:text-red-500"
+              >
+                Revoke
+              </button>
+            </form>
+          </div>
+          <p className="text-[11px] text-[var(--admin-fg-subtle)]">
+            {simulated
+              ? "Test link — opening it and pressing Pay runs the full flow without taking money."
+              : "Live Stripe link. The line goes Active on its own once payment clears."}
+          </p>
+        </>
+      ) : (
+        <form action={formAction} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="clientServiceId" value={line.id} />
+          <input type="hidden" name="clientId" value={clientId} />
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)] disabled:opacity-60"
+          >
+            {pending ? "Creating link" : "Payment link"}
+          </button>
+          {state.error && (
+            <span role="alert" className="text-xs text-red-500">
+              {state.error}
+            </span>
+          )}
+        </form>
+      )}
+    </div>
   );
 }
 

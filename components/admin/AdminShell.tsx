@@ -66,6 +66,15 @@ function ServicesIcon() {
   );
 }
 
+function RevenueIcon() {
+  return (
+    <IconBase>
+      <path d="M3 3v18h18" />
+      <path d="m19 9-5 5-4-4-3 3" />
+    </IconBase>
+  );
+}
+
 function ActivityIcon() {
   return (
     <IconBase>
@@ -89,6 +98,7 @@ const NAV = [
   { href: "/admin/enquiries", label: "Enquiries", exact: false, Icon: EnquiriesIcon },
   { href: "/admin/clients", label: "Clients", exact: false, Icon: ClientsIcon },
   { href: "/admin/services", label: "Services", exact: false, Icon: ServicesIcon },
+  { href: "/admin/revenue", label: "Revenue", exact: false, Icon: RevenueIcon },
   { href: "/admin/activity", label: "Activity", exact: false, Icon: ActivityIcon },
 ];
 

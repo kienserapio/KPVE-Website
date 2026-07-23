@@ -1,0 +1,374 @@
+import "server-only";
+
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+import type { BillingInterval } from "@/lib/db/schema";
+import {
+  PaymentProviderError,
+  type CheckoutRequest,
+  type CheckoutSession,
+  type PaymentEvent,
+  type PaymentProvider,
+} from "./types";
+
+/* ---------------------------------------------------------------------------
+   Stripe, over the REST API with fetch.
+
+   Deliberately no `stripe` npm package. The three calls this CRM needs
+   (create a Checkout Session, verify a webhook, read an event) are a hundred
+   lines against a stable, versioned HTTP API — against a dependency that ships
+   its own retry logic, its own fetch shim and a megabyte of TypeScript for the
+   other four hundred endpoints. Pinning the API version below is what actually
+   protects us from Stripe changing shape underneath.
+
+   Nothing here runs until STRIPE_SECRET_KEY is set; see lib/payments/index.ts.
+--------------------------------------------------------------------------- */
+
+const STRIPE_API = "https://api.stripe.com/v1";
+
+/**
+ * Pinned on purpose. Stripe rolls the account's default version forward over
+ * time; sending it explicitly means an account-level change can never alter
+ * the shape of a response this code is parsing.
+ */
+const STRIPE_API_VERSION = "2025-10-29.clover";
+
+/**
+ * Our intervals → Stripe's `recurring` shape. Stripe has no "quarterly", so a
+ * quarter is three months — the same thing our own maths means by it.
+ */
+const STRIPE_RECURRING: Record<
+  Exclude<BillingInterval, "one_off">,
+  { interval: string; interval_count: number }
+> = {
+  weekly: { interval: "week", interval_count: 1 },
+  monthly: { interval: "month", interval_count: 1 },
+  quarterly: { interval: "month", interval_count: 3 },
+  annually: { interval: "year", interval_count: 1 },
+};
+
+/* ---------------------------------------------------------------------------
+   Form encoding
+
+   Stripe's API takes application/x-www-form-urlencoded with bracket notation
+   for nesting: line_items[0][price_data][unit_amount]=1100. Nothing in the
+   standard URLSearchParams does that, so flatten first.
+--------------------------------------------------------------------------- */
+
+type Encodable = string | number | boolean | null | undefined | Encodable[] | { [k: string]: Encodable };
+
+function flatten(value: Encodable, prefix = "", out: string[][] = []): string[][] {
+  if (value === null || value === undefined) return out;
+
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => flatten(item, `${prefix}[${i}]`, out));
+    return out;
+  }
+
+  if (typeof value === "object") {
+    for (const [key, inner] of Object.entries(value)) {
+      flatten(inner, prefix ? `${prefix}[${key}]` : key, out);
+    }
+    return out;
+  }
+
+  out.push([prefix, String(value)]);
+  return out;
+}
+
+async function stripeRequest<T>(
+  path: string,
+  body: Record<string, Encodable>,
+  secretKey: string,
+): Promise<T> {
+  const response = await fetch(`${STRIPE_API}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Stripe-Version": STRIPE_API_VERSION,
+    },
+    body: new URLSearchParams(flatten(body)).toString(),
+    // Never cached: this is a write, and a cached checkout session would be a
+    // second client paying against the first one's link.
+    cache: "no-store",
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { error?: { message?: string; type?: string } }
+    | null;
+
+  if (!response.ok) {
+    const message = payload?.error?.message ?? `Stripe returned ${response.status}`;
+    throw new PaymentProviderError(message, payload?.error);
+  }
+
+  return payload as T;
+}
+
+/* ---------------------------------------------------------------------------
+   Provider
+--------------------------------------------------------------------------- */
+
+type StripeCheckoutSession = {
+  id: string;
+  url: string | null;
+  customer: string | null;
+  expires_at?: number;
+};
+
+export class StripePaymentProvider implements PaymentProvider {
+  readonly name = "stripe" as const;
+  readonly simulated = false;
+
+  constructor(private readonly secretKey: string) {}
+
+  async createCheckout(request: CheckoutRequest): Promise<CheckoutSession> {
+    const recurring =
+      request.interval === "one_off" ? undefined : STRIPE_RECURRING[request.interval];
+
+    // Our ids travel with the session so the webhook can find the billing line
+    // without trusting anything in the URL. For a subscription they go on the
+    // subscription too — renewal invoices arrive months later and reference
+    // only that, not the checkout that started it.
+    const metadata = {
+      client_service_id: request.clientServiceId,
+      client_id: request.clientId,
+    };
+
+    const body: Record<string, Encodable> = {
+      mode: recurring ? "subscription" : "payment",
+      success_url: request.successUrl,
+      cancel_url: request.cancelUrl,
+      client_reference_id: request.clientServiceId,
+      metadata,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: request.currency.toLowerCase(),
+            unit_amount: request.amountCents,
+            product_data: { name: request.label },
+            ...(recurring ? { recurring } : {}),
+          },
+        },
+      ],
+      ...(recurring
+        ? { subscription_data: { metadata } }
+        : { payment_intent_data: { metadata } }),
+    };
+
+    // A known customer is reused; a new one gets created from their email so
+    // the second service they buy attaches to the same customer record. The
+    // prefix check matters: a client billed during simulated mode may carry an
+    // id from another provider, and Stripe would reject it as unknown.
+    if (request.customerId?.startsWith("cus_")) {
+      body.customer = request.customerId;
+    } else {
+      body.customer_email = request.clientEmail;
+      if (!recurring) body.customer_creation = "always";
+    }
+
+    const session = await stripeRequest<StripeCheckoutSession>(
+      "/checkout/sessions",
+      body,
+      this.secretKey,
+    );
+
+    if (!session.url) {
+      throw new PaymentProviderError("Stripe created the session but returned no URL.");
+    }
+
+    return {
+      provider: "stripe",
+      ref: session.id,
+      url: session.url,
+      customerId: session.customer,
+      expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
+    };
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Webhook signature
+
+   Stripe signs `${timestamp}.${rawBody}` with the endpoint secret. The check
+   is mandatory and it is the ONLY thing standing between the internet and a
+   route that marks invoices paid — the body itself is attacker-controlled
+   until this returns true.
+--------------------------------------------------------------------------- */
+
+/** Reject anything older than this, so a captured request can't be replayed. */
+const TOLERANCE_SECONDS = 300;
+
+export function verifyStripeSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+): boolean {
+  if (!signatureHeader) return false;
+
+  // "t=1699999999,v1=abc…,v1=def…" — more than one v1 during a secret roll.
+  let timestamp = "";
+  const signatures: string[] = [];
+  for (const part of signatureHeader.split(",")) {
+    const [key, value] = part.split("=", 2);
+    if (key?.trim() === "t") timestamp = value?.trim() ?? "";
+    if (key?.trim() === "v1" && value) signatures.push(value.trim());
+  }
+
+  if (!timestamp || signatures.length === 0) return false;
+
+  const sent = Number(timestamp);
+  if (!Number.isFinite(sent) || Math.abs(nowSeconds - sent) > TOLERANCE_SECONDS) return false;
+
+  const expected = createHmac("sha256", secret)
+    .update(`${timestamp}.${rawBody}`, "utf8")
+    .digest();
+
+  return signatures.some((candidate) => {
+    let received: Buffer;
+    try {
+      received = Buffer.from(candidate, "hex");
+    } catch {
+      return false;
+    }
+    // timingSafeEqual throws on a length mismatch, which would itself leak.
+    if (received.length !== expected.length) return false;
+    return timingSafeEqual(received, expected);
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   Event → PaymentEvent
+
+   Only the handful of fields we act on are read; everything else in a Stripe
+   event is ignored on purpose. Amounts stay in the minor units Stripe already
+   uses, which is the same unit this codebase stores.
+--------------------------------------------------------------------------- */
+
+type StripeEvent = {
+  id: string;
+  type: string;
+  created: number;
+  data: { object: Record<string, unknown> };
+};
+
+export function parseStripeEvent(raw: string): StripeEvent | null {
+  try {
+    const parsed = JSON.parse(raw) as StripeEvent;
+    if (!parsed?.id || !parsed?.type || !parsed?.data?.object) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function num(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Where our client_service_id can be hiding, in order of reliability. A
+ * checkout session carries it directly; a renewal invoice carries it on the
+ * subscription it was raised against.
+ */
+function extractClientServiceId(object: Record<string, unknown>): string | null {
+  const direct = object.metadata as Record<string, unknown> | undefined;
+  const fromMetadata = str(direct?.client_service_id);
+  if (fromMetadata) return fromMetadata;
+
+  const subscriptionDetails = object.subscription_details as
+    | { metadata?: Record<string, unknown> }
+    | undefined;
+  const fromSubscription = str(subscriptionDetails?.metadata?.client_service_id);
+  if (fromSubscription) return fromSubscription;
+
+  const lines = object.lines as { data?: Array<Record<string, unknown>> } | undefined;
+  for (const line of lines?.data ?? []) {
+    const lineMetadata = line.metadata as Record<string, unknown> | undefined;
+    const fromLine = str(lineMetadata?.client_service_id);
+    if (fromLine) return fromLine;
+  }
+
+  return str(object.client_reference_id);
+}
+
+export type NormalizedStripeEvent =
+  | { kind: "succeeded"; payment: PaymentEvent }
+  | { kind: "failed"; clientServiceId: string; reason: string; providerRef: string }
+  | { kind: "cancelled"; clientServiceId: string; providerRef: string }
+  | { kind: "ignored"; reason: string };
+
+export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent {
+  const object = event.data.object;
+  const clientServiceId = extractClientServiceId(object);
+
+  switch (event.type) {
+    case "checkout.session.completed": {
+      // `complete` + `paid` is the only combination that means money moved;
+      // async methods (BECS, bank debit) complete the session while still
+      // unpaid and settle later via invoice.paid / payment_intent.succeeded.
+      if (str(object.payment_status) !== "paid") {
+        return { kind: "ignored", reason: "session completed but not paid" };
+      }
+      if (!clientServiceId) return { kind: "ignored", reason: "no client_service_id" };
+
+      return {
+        kind: "succeeded",
+        payment: {
+          provider: "stripe",
+          providerRef: event.id,
+          clientServiceId,
+          amountCents: num(object.amount_total) ?? 0,
+          currency: (str(object.currency) ?? "aud").toUpperCase(),
+          paidAt: new Date(event.created * 1000),
+          subscriptionId: str(object.subscription),
+          customerId: str(object.customer),
+          description: "Checkout completed",
+        },
+      };
+    }
+
+    case "invoice.paid": {
+      if (!clientServiceId) return { kind: "ignored", reason: "no client_service_id" };
+      return {
+        kind: "succeeded",
+        payment: {
+          provider: "stripe",
+          providerRef: event.id,
+          clientServiceId,
+          amountCents: num(object.amount_paid) ?? 0,
+          currency: (str(object.currency) ?? "aud").toUpperCase(),
+          paidAt: new Date(event.created * 1000),
+          subscriptionId: str(object.subscription),
+          customerId: str(object.customer),
+          description: str(object.number) ? `Invoice ${str(object.number)}` : "Invoice paid",
+        },
+      };
+    }
+
+    case "invoice.payment_failed": {
+      if (!clientServiceId) return { kind: "ignored", reason: "no client_service_id" };
+      return {
+        kind: "failed",
+        clientServiceId,
+        providerRef: event.id,
+        reason: "The card was declined or the payment failed.",
+      };
+    }
+
+    case "customer.subscription.deleted": {
+      if (!clientServiceId) return { kind: "ignored", reason: "no client_service_id" };
+      return { kind: "cancelled", clientServiceId, providerRef: event.id };
+    }
+
+    default:
+      return { kind: "ignored", reason: `unhandled type ${event.type}` };
+  }
+}

@@ -19,6 +19,9 @@ import {
   summarizeClientServices,
   type ClientServiceItem,
 } from "./services";
+import { listClientNotes, type ClientNoteItem } from "./notes";
+import { listClientDocuments, type ClientDocumentItem } from "./documents";
+import { listClientPayments, type PaymentItem } from "./payments";
 import type { CurrencyTotal } from "@/lib/billing";
 
 export const PAGE_SIZE = 25;
@@ -72,6 +75,11 @@ export type ClientDetail = {
   services: ClientServiceItem[];
   /** Per-currency rollup of the active services above. */
   revenue: CurrencyTotal[];
+  /** Dated call/meeting/email entries — the relationship history. */
+  timeline: ClientNoteItem[];
+  documents: ClientDocumentItem[];
+  /** Money actually taken, newest first. */
+  payments: PaymentItem[];
 };
 
 /* ---------------------------------------------------------------------------
@@ -269,7 +277,12 @@ export async function getClient(id: string): Promise<ClientDetail | null> {
 
   if (!row) return null;
 
-  const services = await listClientServices(id);
+  const [services, timeline, documents, paymentHistory] = await Promise.all([
+    listClientServices(id),
+    listClientNotes(id),
+    listClientDocuments(id),
+    listClientPayments(id),
+  ]);
 
   // Open tasks first, then by due date (nulls last), then newest.
   const taskRows = await db
@@ -297,7 +310,15 @@ export async function getClient(id: string): Promise<ClientDetail | null> {
     overdue: !t.done && t.dueAt ? t.dueAt.getTime() < now : false,
   }));
 
-  return { ...row, tasks, services, revenue: summarizeClientServices(services) };
+  return {
+    ...row,
+    tasks,
+    services,
+    revenue: summarizeClientServices(services),
+    timeline,
+    documents,
+    payments: paymentHistory,
+  };
 }
 
 /** The client promoted from this lead, if any — drives the lead's convert UI. */

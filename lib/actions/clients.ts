@@ -12,10 +12,14 @@ import {
   toggleTask,
   deleteTask,
 } from "@/lib/dal/clients";
+import { addClientNote, deleteClientNote } from "@/lib/dal/notes";
+import { addClientDocument, deleteClientDocument } from "@/lib/dal/documents";
 import {
   createClientSchema,
   updateClientSchema,
   createTaskSchema,
+  createNoteSchema,
+  createDocumentSchema,
 } from "@/lib/validation";
 
 export type ClientActionState = { ok: boolean; error: string | null };
@@ -177,5 +181,99 @@ export async function deleteTaskAction(formData: FormData): Promise<void> {
     revalidatePath(`/admin/clients/${clientId}`);
   } catch (error) {
     console.error("[deleteTaskAction]", error);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Notes timeline
+--------------------------------------------------------------------------- */
+
+export async function addNoteAction(
+  _prev: ClientActionState,
+  formData: FormData,
+): Promise<ClientActionState> {
+  const parsed = createNoteSchema.safeParse({
+    clientId: formData.get("clientId"),
+    kind: formData.get("kind") || undefined,
+    body: formData.get("body"),
+    occurredAt: formData.get("occurredAt") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return initialFail(parsed.error.issues[0]?.message ?? "Couldn't save that entry.");
+  }
+
+  try {
+    await requireSession();
+    await addClientNote({
+      clientId: parsed.data.clientId,
+      kind: parsed.data.kind,
+      body: parsed.data.body,
+      occurredAt: parsed.data.occurredAt ?? null,
+    });
+  } catch (error) {
+    console.error("[addNoteAction]", error);
+    return initialFail(mapError(error));
+  }
+
+  revalidatePath(`/admin/clients/${parsed.data.clientId}`);
+  revalidatePath("/admin/clients");
+  return { ok: true, error: null };
+}
+
+export async function deleteNoteAction(formData: FormData): Promise<void> {
+  const noteId = String(formData.get("noteId") ?? "");
+  if (!noteId) return;
+
+  try {
+    await requireSession();
+    const { clientId } = await deleteClientNote(noteId);
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[deleteNoteAction]", error);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Documents
+--------------------------------------------------------------------------- */
+
+export async function addDocumentAction(
+  _prev: ClientActionState,
+  formData: FormData,
+): Promise<ClientActionState> {
+  const parsed = createDocumentSchema.safeParse({
+    clientId: formData.get("clientId"),
+    label: formData.get("label"),
+    url: formData.get("url"),
+    kind: formData.get("kind") || undefined,
+  });
+
+  if (!parsed.success) {
+    return initialFail(parsed.error.issues[0]?.message ?? "Couldn't save that document.");
+  }
+
+  try {
+    await requireSession();
+    await addClientDocument(parsed.data);
+  } catch (error) {
+    console.error("[addDocumentAction]", error);
+    return initialFail(mapError(error));
+  }
+
+  revalidatePath(`/admin/clients/${parsed.data.clientId}`);
+  return { ok: true, error: null };
+}
+
+export async function deleteDocumentAction(formData: FormData): Promise<void> {
+  const documentId = String(formData.get("documentId") ?? "");
+  if (!documentId) return;
+
+  try {
+    await requireSession();
+    const { clientId } = await deleteClientDocument(documentId);
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[deleteDocumentAction]", error);
   }
 }

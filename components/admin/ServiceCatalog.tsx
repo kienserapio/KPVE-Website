@@ -3,13 +3,16 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 
 import {
+  addTaskTemplateAction,
   createServiceAction,
   deleteServiceAction,
+  deleteTaskTemplateAction,
   toggleServiceActiveAction,
   updateServiceAction,
   type ServiceActionState,
 } from "@/lib/actions/services";
 import type { ServiceItem } from "@/lib/dal/services";
+import type { TaskTemplateItem } from "@/lib/dal/checklists";
 import {
   BILLING_INTERVALS,
   centsToInput,
@@ -40,7 +43,13 @@ const selectClass =
    the amount that was copied onto them, so nobody gets silently repriced.
 --------------------------------------------------------------------------- */
 
-export function ServiceCatalog({ services }: { services: ServiceItem[] }) {
+export function ServiceCatalog({
+  services,
+  templates,
+}: {
+  services: ServiceItem[];
+  templates: TaskTemplateItem[];
+}) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   return (
@@ -64,6 +73,7 @@ export function ServiceCatalog({ services }: { services: ServiceItem[] }) {
                 <ServiceRow
                   key={service.id}
                   service={service}
+                  checklist={templates.filter((t) => t.serviceId === service.id)}
                   onEdit={() => setEditingId(service.id)}
                 />
               ),
@@ -75,7 +85,15 @@ export function ServiceCatalog({ services }: { services: ServiceItem[] }) {
   );
 }
 
-function ServiceRow({ service, onEdit }: { service: ServiceItem; onEdit: () => void }) {
+function ServiceRow({
+  service,
+  checklist,
+  onEdit,
+}: {
+  service: ServiceItem;
+  checklist: TaskTemplateItem[];
+  onEdit: () => void;
+}) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
@@ -111,12 +129,19 @@ function ServiceRow({ service, onEdit }: { service: ServiceItem; onEdit: () => v
               ? "No clients on it"
               : `${service.activeClients} client${service.activeClients === 1 ? "" : "s"}`}
           </span>
+          {service.checklistItems > 0 && (
+            <span>
+              · {service.checklistItems}-step checklist
+            </span>
+          )}
         </div>
         {service.description && (
           <p className="mt-1 max-w-2xl text-xs text-[var(--admin-fg-muted)]">
             {service.description}
           </p>
         )}
+
+        <ChecklistEditor serviceId={service.id} items={checklist} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -179,6 +204,126 @@ function ServiceRow({ service, onEdit }: { service: ServiceItem; onEdit: () => v
         </p>
       )}
     </li>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Onboarding checklist
+
+   Collapsed by default: it's setup, not something anyone reads daily. Each step
+   carries a day offset from the attach date, so putting a client on the service
+   produces a dated task list rather than five undated reminders.
+--------------------------------------------------------------------------- */
+
+function ChecklistEditor({
+  serviceId,
+  items,
+}: {
+  serviceId: string;
+  items: TaskTemplateItem[];
+}) {
+  const [state, formAction, pending] = useActionState(addTaskTemplateAction, initialState);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (state.ok) formRef.current?.reset();
+  }, [state.ok]);
+
+  return (
+    <details className="group mt-2">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          className="size-3.5 transition group-open:rotate-90"
+        >
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+        Onboarding checklist{items.length > 0 ? ` (${items.length})` : ""}
+      </summary>
+
+      <div className="mt-3 max-w-2xl rounded-lg border border-[var(--admin-border)] bg-[var(--admin-surface-2)] p-3">
+        {items.length === 0 ? (
+          <p className="text-xs text-[var(--admin-fg-subtle)]">
+            No steps yet. Add the things you owe a client when they buy this —
+            kickoff call, assets, DNS, credentials, go-live.
+          </p>
+        ) : (
+          <ol className="flex flex-col divide-y divide-[var(--admin-border)]">
+            {items.map((item) => (
+              <li key={item.id} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+                <span className="min-w-0 flex-1 truncate text-xs text-[var(--admin-fg)]">
+                  {item.title}
+                </span>
+                <span className="shrink-0 text-[11px] tabular-nums text-[var(--admin-fg-subtle)]">
+                  {item.offsetDays === 0 ? "Day 0" : `+${item.offsetDays}d`}
+                </span>
+                <form action={deleteTaskTemplateAction}>
+                  <input type="hidden" name="templateId" value={item.id} />
+                  <button
+                    type="submit"
+                    aria-label={`Remove ${item.title}`}
+                    className="rounded p-1 text-[var(--admin-fg-subtle)] transition hover:text-red-500"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-3.5">
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ol>
+        )}
+
+        <form ref={formRef} action={formAction} className="mt-3 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="serviceId" value={serviceId} />
+          <div className="min-w-[12rem] flex-1">
+            <label className="sr-only" htmlFor={`step-${serviceId}`}>
+              Step
+            </label>
+            <AdminInput
+              id={`step-${serviceId}`}
+              name="title"
+              required
+              placeholder="e.g. Kickoff call"
+              className="py-2 text-xs"
+            />
+          </div>
+          <div className="w-24">
+            <label
+              className="mb-1 block text-[11px] text-[var(--admin-fg-subtle)]"
+              htmlFor={`offset-${serviceId}`}
+            >
+              Due in
+            </label>
+            <AdminInput
+              id={`offset-${serviceId}`}
+              name="offsetDays"
+              type="number"
+              min={0}
+              max={365}
+              defaultValue={0}
+              className="py-2 text-xs"
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-lg border border-[var(--admin-border-strong)] px-3 py-2 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface)] hover:text-[var(--admin-fg)] disabled:opacity-60"
+          >
+            {pending ? "Adding" : "Add step"}
+          </button>
+        </form>
+
+        {state.error && (
+          <p role="alert" className="mt-2 text-xs text-red-500">
+            {state.error}
+          </p>
+        )}
+      </div>
+    </details>
   );
 }
 

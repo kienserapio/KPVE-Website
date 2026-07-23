@@ -277,6 +277,72 @@ export const createClientServiceSchema = z.object({
   notes: emptyToUndefined.pipe(z.string().max(2000).optional()),
 });
 
+/* ---------------------------------------------------------------------------
+   Payments, notes, documents and checklists
+--------------------------------------------------------------------------- */
+
+export const clientServiceIdSchema = z.object({
+  clientServiceId: z.string().uuid(),
+});
+
+export const noteKindSchema = z.enum(["note", "call", "meeting", "email", "milestone"]);
+
+export const createNoteSchema = z.object({
+  clientId: z.string().uuid(),
+  kind: noteKindSchema.default("note"),
+  body: z
+    .string()
+    .trim()
+    .min(1, "Write something first")
+    .max(5000, "That's too long for one entry"),
+  // datetime-local, blank means "now".
+  occurredAt: optionalDate,
+});
+
+export const documentKindSchema = z.enum([
+  "contract",
+  "proposal",
+  "brief",
+  "invoice",
+  "asset",
+  "other",
+]);
+
+export const createDocumentSchema = z.object({
+  clientId: z.string().uuid(),
+  label: z.string().trim().min(1, "Give the document a name").max(200, "Name is too long"),
+  /**
+   * http/https only. A `javascript:` or `data:` URL stored here would be
+   * rendered as a link on the client page and clicked by staff — this is the
+   * one place untrusted-looking input becomes something someone clicks.
+   */
+  url: z
+    .string()
+    .trim()
+    .min(1, "Paste a link")
+    .max(2000, "That link is too long")
+    .refine(
+      (value) => {
+        try {
+          const { protocol } = new URL(value);
+          return protocol === "http:" || protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "Enter a full link starting with https://" },
+    ),
+  kind: documentKindSchema.default("other"),
+});
+
+export const createTaskTemplateSchema = z.object({
+  serviceId: z.string().uuid(),
+  title: z.string().trim().min(1, "Give the step a name").max(300, "That's too long"),
+  // Days after the service starts. A year of lead time is plenty; negative
+  // would mean "due before we sold it".
+  offsetDays: z.coerce.number().int().min(0, "Days can't be negative").max(365).default(0),
+});
+
 export const updateClientServiceSchema = z.object({
   clientServiceId: z.string().uuid(),
   label: z.string().trim().min(1, "Give this line a name").max(200).optional(),

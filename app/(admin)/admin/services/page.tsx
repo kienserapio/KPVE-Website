@@ -1,5 +1,6 @@
 import { verifySession } from "@/lib/dal/session";
 import { listServices } from "@/lib/dal/services";
+import { listTaskTemplates } from "@/lib/dal/checklists";
 import { formatMoney } from "@/lib/billing";
 import { StatCard } from "@/components/admin/ui";
 import { ServiceCatalog } from "@/components/admin/ServiceCatalog";
@@ -8,7 +9,10 @@ export default async function ServicesPage() {
   await verifySession();
 
   // Archived entries are shown too — this is the page where you'd un-archive.
-  const services = await listServices({ includeInactive: true });
+  const [services, templates] = await Promise.all([
+    listServices({ includeInactive: true }),
+    listTaskTemplates(),
+  ]);
 
   const active = services.filter((s) => s.isActive);
   const onSale = active.filter((s) => s.defaultAmountCents > 0);
@@ -27,6 +31,10 @@ export default async function ServicesPage() {
           retainer, a one-off build — and it becomes a one-click option when
           putting a client on it. No deploy needed.
         </p>
+        <p className="mt-2 max-w-2xl text-sm text-[var(--admin-fg-muted)]">
+          Each service can also carry an onboarding checklist — the steps that
+          get created as dated tasks on a client the moment they&apos;re put on it.
+        </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -43,7 +51,7 @@ export default async function ServicesPage() {
         />
       </div>
 
-      <ServiceCatalog services={services} />
+      <ServiceCatalog services={services} templates={templates} />
     </div>
   );
 }

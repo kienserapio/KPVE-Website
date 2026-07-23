@@ -6,6 +6,9 @@ import type {
   Priority,
   ClientStatus,
   ClientServiceStatus,
+  PaymentStatus,
+  NoteKind,
+  DocumentKind,
 } from "@/lib/db/schema";
 
 /* ---------------------------------------------------------------------------
@@ -234,6 +237,67 @@ export const SERVICE_STATUSES: ClientServiceStatus[] = [
 
 export function ServiceStatusBadge({ status }: { status: ClientServiceStatus }) {
   return <ColorPill label={SERVICE_STATUS_LABELS[status]} colorVar={SERVICE_STATUS_VAR[status]} />;
+}
+
+/* ---- Payment status ----
+   Reuses the billing-status hues rather than inventing a second palette: a
+   succeeded payment and an active service mean the same thing to the eye. */
+
+const PAYMENT_STATUS_VAR: Record<PaymentStatus, string> = {
+  pending: "--svc-pending-fg",
+  succeeded: "--svc-active-fg",
+  failed: "--pr-high-fg",
+  refunded: "--svc-draft-fg",
+};
+
+export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  pending: "Pending",
+  succeeded: "Paid",
+  failed: "Failed",
+  refunded: "Refunded",
+};
+
+export function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
+  return <ColorPill label={PAYMENT_STATUS_LABELS[status]} colorVar={PAYMENT_STATUS_VAR[status]} />;
+}
+
+/* ---- Timeline entries and documents ---- */
+
+export const NOTE_KIND_LABELS: Record<NoteKind, string> = {
+  note: "Note",
+  call: "Call",
+  meeting: "Meeting",
+  email: "Email",
+  milestone: "Milestone",
+};
+
+export const NOTE_KINDS: NoteKind[] = ["note", "call", "meeting", "email", "milestone"];
+
+export const DOCUMENT_KIND_LABELS: Record<DocumentKind, string> = {
+  contract: "Contract",
+  proposal: "Proposal",
+  brief: "Brief",
+  invoice: "Invoice",
+  asset: "Asset",
+  other: "Other",
+};
+
+export const DOCUMENT_KINDS: DocumentKind[] = [
+  "contract",
+  "proposal",
+  "brief",
+  "invoice",
+  "asset",
+  "other",
+];
+
+/** A neutral outlined chip — same reasoning as CategoryBadge. */
+export function Chip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center whitespace-nowrap rounded-md border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--admin-fg-muted)]">
+      {children}
+    </span>
+  );
 }
 
 /* ---------------------------------------------------------------------------

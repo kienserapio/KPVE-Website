@@ -5,6 +5,7 @@ import {
   text,
   integer,
   timestamp,
+  date,
   boolean,
   jsonb,
   index,
@@ -81,6 +82,35 @@ export const clientServiceStatusEnum = pgEnum("client_service_status", [
   "active",
   "paused",
   "cancelled",
+]);
+
+/**
+ * A single attempt to take money. `pending` is "link sent, nothing has cleared";
+ * `succeeded` is the only state that counts as collected revenue.
+ */
+export const paymentStatusEnum = pgEnum("payment_status", [
+  "pending",
+  "succeeded",
+  "failed",
+  "refunded",
+]);
+
+/** What a timeline entry records. `note` is the catch-all. */
+export const noteKindEnum = pgEnum("note_kind", [
+  "note",
+  "call",
+  "meeting",
+  "email",
+  "milestone",
+]);
+
+export const documentKindEnum = pgEnum("document_kind", [
+  "contract",
+  "proposal",
+  "brief",
+  "invoice",
+  "asset",
+  "other",
 ]);
 
 /* ---------------------------------------------------------------------------
@@ -175,6 +205,13 @@ export const clients = pgTable(
       onDelete: "set null",
     }),
     notes: text("notes"),
+
+    /**
+     * The payment provider's customer id (`cus_…` on Stripe). Written the first
+     * time we take money from them and reused after that, so one client is one
+     * customer over there rather than a new one per checkout.
+     */
+    billingCustomerId: text("billing_customer_id"),
 
     // Provenance. Null for clients added by hand rather than converted.
     sourceLeadId: uuid("source_lead_id").references(() => leads.id, {
@@ -295,6 +332,19 @@ export const clientServices = pgTable(
 
     notes: text("notes"),
 
+    /* ---- Payment link / subscription state (see lib/payments) ----
+       Which provider minted the current link ("mock" or "stripe"), its id, and
+       the URL to send the client. `checkoutRef` is the unguessable token the
+       simulated checkout page is addressed by, so it is unique rather than
+       merely indexed. */
+    paymentProvider: text("payment_provider"),
+    checkoutRef: text("checkout_ref"),
+    checkoutUrl: text("checkout_url"),
+    checkoutCreatedAt: timestamp("checkout_created_at", { withTimezone: true }),
+    /** `sub_…` once a recurring line is a real subscription over at the provider. */
+    externalSubscriptionId: text("external_subscription_id"),
+    lastPaymentAt: timestamp("last_payment_at", { withTimezone: true }),
+
     createdBy: uuid("created_by").references(() => staffUsers.id, {
       onDelete: "set null",
     }),
@@ -306,7 +356,169 @@ export const clientServices = pgTable(
     index("client_services_status_idx").on(table.status),
     // Drives the "upcoming bills" list on the Overview.
     index("client_services_next_bill_idx").on(table.nextBillAt),
+    // Postgres allows many NULLs in a unique index, so lines with no link
+    // outstanding don't collide.
+    uniqueIndex("client_services_checkout_ref_idx").on(table.checkoutRef),
   ],
+);
+
+/* ---------------------------------------------------------------------------
+   payments — every attempt to take money, whoever took it.
+
+   Rows are written by the payment webhook (or the simulator, which goes through
+   the same code path), never by hand-editing a status. `provider_ref` is the
+   provider's own id for the event and is UNIQUE: a webhook that Stripe retries
+   three times must produce one payment, not three. That unique index is the
+   idempotency guarantee, not the application logic around it.
+
+   `client_service_id` is ON DELETE SET NULL — removing a billing line must not
+   erase the money that was collected against it.
+--------------------------------------------------------------------------- */
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    clientServiceId: uuid("client_service_id").references(() => clientServices.id, {
+      onDelete: "set null",
+    }),
+
+    // "mock" (simulated) or "stripe". Kept on the row so history stays readable
+    // after the switch to real payments.
+    provider: text("provider").notNull().default("mock"),
+    providerRef: text("provider_ref"),
+
+    status: paymentStatusEnum("status").notNull().default("pending"),
+    amountCents: integer("amount_cents").notNull().default(0),
+    currency: text("currency").notNull().default("AUD"),
+    description: text("description"),
+
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    metadata: jsonb("metadata"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("payments_client_idx").on(table.clientId),
+    index("payments_status_idx").on(table.status),
+    index("payments_paid_at_idx").on(table.paidAt),
+    uniqueIndex("payments_provider_ref_idx").on(table.providerRef),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   client_notes — the relationship timeline: calls, meetings, emails, updates.
+
+   Replaces reading history out of one ever-growing `clients.notes` blob. Each
+   entry is dated and attributed, so "when did we last speak to them" is a
+   query rather than an archaeology exercise. `occurred_at` is separate from
+   `created_at` because a call logged on Friday may have happened on Tuesday.
+--------------------------------------------------------------------------- */
+
+export const clientNotes = pgTable(
+  "client_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    kind: noteKindEnum("kind").notNull().default("note"),
+    body: text("body").notNull(),
+    authorId: uuid("author_id").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("client_notes_client_idx").on(table.clientId, table.occurredAt)],
+);
+
+/* ---------------------------------------------------------------------------
+   client_documents — the contract, the brief, the signed quote.
+
+   Links, not uploads: there is no blob storage in this stack, and pointing at
+   the Drive/Dropbox file the team already works from beats a second copy that
+   silently goes stale.
+--------------------------------------------------------------------------- */
+
+export const clientDocuments = pgTable(
+  "client_documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    url: text("url").notNull(),
+    kind: documentKindEnum("kind").notNull().default("other"),
+    addedBy: uuid("added_by").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("client_documents_client_idx").on(table.clientId)],
+);
+
+/* ---------------------------------------------------------------------------
+   service_task_templates — the onboarding checklist for a catalogue service.
+
+   "Put a client on Hosting" should create the five things we owe them (kickoff
+   call, DNS, credentials, staging, go-live) rather than relying on someone
+   remembering all five. `offset_days` is days from the attach date, so a
+   template is a schedule, not just a list.
+
+   Cascade-deletes with its service: a checklist for a service that no longer
+   exists is noise. Tasks already created on clients are untouched — they are
+   ordinary client_tasks rows by then.
+--------------------------------------------------------------------------- */
+
+export const serviceTaskTemplates = pgTable(
+  "service_task_templates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    serviceId: uuid("service_id")
+      .notNull()
+      .references(() => services.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    offsetDays: integer("offset_days").notNull().default(0),
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("service_task_templates_service_idx").on(table.serviceId)],
+);
+
+/* ---------------------------------------------------------------------------
+   revenue_snapshots — what MRR actually was on a given month.
+
+   The live tables only ever describe *now*: change a price and last month's
+   number changes with it. One row per month per currency, written by
+   `npm run revenue:snapshot` (or on the first dashboard load of the day), is
+   what makes "new vs churned MRR" and a 12-month trend answerable at all.
+
+   Months with no snapshot are reconstructed from service start/cancel dates so
+   the chart isn't empty on day one — see lib/dal/revenue.ts.
+--------------------------------------------------------------------------- */
+
+export const revenueSnapshots = pgTable(
+  "revenue_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // First day of the month it describes, as a plain date: 'YYYY-MM-01'.
+    period: date("period").notNull(),
+    currency: text("currency").notNull(),
+    mrrCents: integer("mrr_cents").notNull().default(0),
+    arrCents: integer("arr_cents").notNull().default(0),
+    oneOffCents: integer("one_off_cents").notNull().default(0),
+    activeLines: integer("active_lines").notNull().default(0),
+    payingClients: integer("paying_clients").notNull().default(0),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("revenue_snapshots_period_idx").on(table.period, table.currency)],
 );
 
 /* ---------------------------------------------------------------------------
@@ -355,4 +567,13 @@ export type ClientService = typeof clientServices.$inferSelect;
 export type NewClientService = typeof clientServices.$inferInsert;
 export type BillingInterval = (typeof billingIntervalEnum.enumValues)[number];
 export type ClientServiceStatus = (typeof clientServiceStatusEnum.enumValues)[number];
+export type Payment = typeof payments.$inferSelect;
+export type NewPayment = typeof payments.$inferInsert;
+export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
+export type ClientNote = typeof clientNotes.$inferSelect;
+export type NoteKind = (typeof noteKindEnum.enumValues)[number];
+export type ClientDocument = typeof clientDocuments.$inferSelect;
+export type DocumentKind = (typeof documentKindEnum.enumValues)[number];
+export type ServiceTaskTemplate = typeof serviceTaskTemplates.$inferSelect;
+export type RevenueSnapshot = typeof revenueSnapshots.$inferSelect;
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
