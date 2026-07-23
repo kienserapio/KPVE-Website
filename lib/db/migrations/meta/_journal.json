@@ -15,6 +15,13 @@
       "when": 1784693669278,
       "tag": "0001_naive_magdalene",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784777009656,
+      "tag": "0002_aromatic_aaron_stack",
+      "breakpoints": true
     }
   ]
 }

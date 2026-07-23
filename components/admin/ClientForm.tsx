@@ -21,7 +21,7 @@ export function ClientForm({
   return (
     <Card className="p-6">
       <form action={formAction} className="flex flex-col gap-6">
-        <ClientFields defaults={defaults} staffOptions={staffOptions} />
+        <ClientFields variant="create" defaults={defaults} staffOptions={staffOptions} />
 
         {state.error && (
           <p

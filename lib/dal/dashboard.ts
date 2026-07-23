@@ -13,6 +13,7 @@ import {
 import { requireSession } from "./session";
 import { getLeadStats, type LeadStats } from "./leads";
 import { getClientStats, type ClientStats } from "./clients";
+import { getRevenueSummary, type RevenueSummary } from "./services";
 
 export type TimePoint = { label: string; value: number };
 export type CategoryCount = { category: ServiceCategory; value: number };
@@ -38,6 +39,7 @@ export type RecentLead = {
 export type DashboardData = {
   leadStats: LeadStats;
   clientStats: ClientStats;
+  revenue: RevenueSummary; // MRR/ARR, per-service breakdown, upcoming bills
   conversionRate: number; // whole percent, converted / all-time enquiries
   enquiriesByWeek: TimePoint[]; // last 8 weeks, oldest → newest
   leadsByCategory: CategoryCount[]; // all 8 categories, descending by count
@@ -80,6 +82,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const [
     leadStats,
     clientStats,
+    revenue,
     createdRows,
     categoryRows,
     dueRows,
@@ -87,6 +90,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   ] = await Promise.all([
     getLeadStats(),
     getClientStats(),
+    getRevenueSummary(),
     // Bucket in JS rather than date_trunc so week boundaries match the labels
     // we render and stay in one timezone. Volume is small for this site.
     db
@@ -173,6 +177,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   return {
     leadStats,
     clientStats,
+    revenue,
     conversionRate,
     enquiriesByWeek,
     leadsByCategory,

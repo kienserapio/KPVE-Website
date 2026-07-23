@@ -31,7 +31,11 @@ export async function GET(request: Request) {
       "Phone",
       "Category",
       "Status",
-      "Value",
+      // Plain decimal, not a formatted string — this column gets summed in a
+      // spreadsheet, and "$1,100.00" sums to nothing.
+      "MRR",
+      "Currency",
+      "ARR",
       "Account owner",
       "Open tasks",
       "Created",
@@ -44,7 +48,9 @@ export async function GET(request: Request) {
       r.phone,
       CATEGORY_LABELS[r.category],
       CLIENT_STATUS_LABELS[r.status],
-      r.value,
+      (r.mrrCents / 100).toFixed(2),
+      r.mrrCurrency ?? "",
+      ((r.mrrCents * 12) / 100).toFixed(2),
       r.assignedStaffName,
       r.openTasks,
       r.createdAt.toISOString(),

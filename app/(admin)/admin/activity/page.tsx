@@ -13,6 +13,13 @@ const ACTION_LABELS: Record<string, string> = {
   "client.updated": "Client updated",
   "client.deleted": "Client deleted",
   "task.created": "Task added",
+  "service.created": "Service added to catalogue",
+  "service.updated": "Service updated",
+  "service.deleted": "Service removed from catalogue",
+  "client_service.added": "Client put on a service",
+  "client_service.updated": "Client service changed",
+  "client_service.billed": "Service marked billed",
+  "client_service.removed": "Client service removed",
   "login.success": "Signed in",
   "login.failed": "Failed sign-in attempt",
   logout: "Signed out",
@@ -70,6 +77,13 @@ export default async function ActivityPage() {
                         className="text-[var(--admin-accent)] hover:underline"
                       >
                         View client
+                      </Link>
+                    ) : item.entityType === "service" ? (
+                      <Link
+                        href="/admin/services"
+                        className="text-[var(--admin-accent)] hover:underline"
+                      >
+                        View services
                       </Link>
                     ) : (
                       <span className="text-[var(--admin-fg-subtle)]">

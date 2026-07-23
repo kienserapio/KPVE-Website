@@ -3,10 +3,12 @@ import {
   pgEnum,
   uuid,
   text,
+  integer,
   timestamp,
   boolean,
   jsonb,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 /* ---------------------------------------------------------------------------
@@ -52,6 +54,33 @@ export const clientStatusEnum = pgEnum("client_status", [
   "on_hold",
   "completed",
   "churned",
+]);
+
+/**
+ * How often a service is charged. `one_off` is a single invoice, not a cycle —
+ * it is deliberately part of the same enum so a project fee and a retainer can
+ * live on the same client as two rows of the same shape. Revenue maths excludes
+ * one-offs from MRR and reports them separately (see lib/billing.ts).
+ */
+export const billingIntervalEnum = pgEnum("billing_interval", [
+  "one_off",
+  "weekly",
+  "monthly",
+  "quarterly",
+  "annually",
+]);
+
+/**
+ * Lifecycle of a single service sold to a client.
+ * `pending_payment` exists for the Stripe step: the link has been sent, nothing
+ * has cleared yet. Only `active` counts toward MRR.
+ */
+export const clientServiceStatusEnum = pgEnum("client_service_status", [
+  "draft",
+  "pending_payment",
+  "active",
+  "paused",
+  "cancelled",
 ]);
 
 /* ---------------------------------------------------------------------------
@@ -133,9 +162,14 @@ export const clients = pgTable(
     category: serviceCategoryEnum("category").notNull().default("general"),
     status: clientStatusEnum("status").notNull().default("active"),
 
-    // Freeform on purpose — "$2,000/mo retainer", "Project — TBC". A numeric
-    // column would force a currency and a shape the team hasn't committed to.
-    value: text("value"),
+    /**
+     * The old freeform "deal / value" field ("$2,000/mo retainer"). Superseded
+     * by `client_services`, which stores real money the team can add up. Kept
+     * read-only so nothing written before the change is lost; the column name
+     * stays `value` on purpose — renaming it buys nothing and costs a migration.
+     * Drop it once every client has been re-entered as services.
+     */
+    legacyValue: text("value"),
 
     assignedStaffId: uuid("assigned_staff_id").references(() => staffUsers.id, {
       onDelete: "set null",
@@ -182,6 +216,100 @@ export const clientTasks = pgTable(
 );
 
 /* ---------------------------------------------------------------------------
+   services — the billable catalogue. What KPVE sells: "Emails", "Hosting",
+   "Retainer", "Site build". Staff create these themselves, which is the whole
+   point: adding a new thing to sell must not require a migration and a deploy.
+
+   Deliberately NOT the same as `service_category` above. That enum mirrors the
+   seven marketing service pages and is used to triage enquiries — a fixed list
+   tied to the website. This table is what we invoice for, and it changes
+   whenever the business changes. Two different ideas that share a word.
+--------------------------------------------------------------------------- */
+
+export const services = pgTable(
+  "services",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    // Stable machine key — lowercased/hyphenated from the name on create.
+    slug: text("slug").notNull(),
+    description: text("description"),
+
+    // Defaults only. They are copied onto a client_services row at attach time,
+    // so repricing the catalogue never silently reprices existing clients.
+    defaultAmountCents: integer("default_amount_cents").notNull().default(0),
+    defaultCurrency: text("default_currency").notNull().default("AUD"),
+    defaultInterval: billingIntervalEnum("default_interval").notNull().default("monthly"),
+
+    // Archive rather than delete — a retired service still has history attached.
+    isActive: boolean("is_active").notNull().default(true),
+
+    createdBy: uuid("created_by").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("services_slug_idx").on(table.slug)],
+);
+
+/* ---------------------------------------------------------------------------
+   client_services — one billable line on a client. A client has many: Emails
+   $11/mo + Hosting $30/mo + a one-off $2,500 build are three rows, which is
+   exactly what a single `value` column could never express.
+
+   Amount, currency and interval are COPIED from the catalogue at attach time
+   (same copy-at-conversion rule used for lead → client). `service_id` is a soft
+   link for reporting; the row stands on its own if the catalogue entry is
+   deleted, and is nullable so a bespoke one-off line needs no catalogue entry.
+--------------------------------------------------------------------------- */
+
+export const clientServices = pgTable(
+  "client_services",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    serviceId: uuid("service_id").references(() => services.id, {
+      onDelete: "set null",
+    }),
+
+    // What this line is called on the client's record. Defaults to the
+    // catalogue name, overridable — "Hosting (staging + prod)".
+    label: text("label").notNull(),
+
+    // Integer minor units. Never a float: 0.1 + 0.2 is not 0.3, and money that
+    // doesn't add up is worse than no money column at all.
+    amountCents: integer("amount_cents").notNull().default(0),
+    currency: text("currency").notNull().default("AUD"),
+    interval: billingIntervalEnum("interval").notNull().default("monthly"),
+
+    status: clientServiceStatusEnum("status").notNull().default("active"),
+
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    // Next date this line should be charged. Auto-computed from startedAt +
+    // interval on create, rolled forward by "Mark billed", editable by hand.
+    nextBillAt: timestamp("next_bill_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+
+    notes: text("notes"),
+
+    createdBy: uuid("created_by").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("client_services_client_idx").on(table.clientId),
+    index("client_services_status_idx").on(table.status),
+    // Drives the "upcoming bills" list on the Overview.
+    index("client_services_next_bill_idx").on(table.nextBillAt),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
    activity_log — audit trail.
    Deliberately generic (entityType/entityId) so future entities log through
    the same table without a schema change.
@@ -221,4 +349,10 @@ export type NewClient = typeof clients.$inferInsert;
 export type ClientStatus = (typeof clientStatusEnum.enumValues)[number];
 export type ClientTask = typeof clientTasks.$inferSelect;
 export type NewClientTask = typeof clientTasks.$inferInsert;
+export type Service = typeof services.$inferSelect;
+export type NewService = typeof services.$inferInsert;
+export type ClientService = typeof clientServices.$inferSelect;
+export type NewClientService = typeof clientServices.$inferInsert;
+export type BillingInterval = (typeof billingIntervalEnum.enumValues)[number];
+export type ClientServiceStatus = (typeof clientServiceStatusEnum.enumValues)[number];
 export type ActivityLogEntry = typeof activityLog.$inferSelect;

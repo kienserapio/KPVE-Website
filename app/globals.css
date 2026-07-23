@@ -244,6 +244,14 @@ body {
   --cs-completed-fg: #7dd3fc;
   --cs-churned-fg: #a3a3a3;
 
+  /* Billable service status — awaiting-payment borrows the "needs a look"
+     amber so an unpaid line reads as an action, not a state. */
+  --svc-draft-fg: #a3a3a3;
+  --svc-pending-fg: #fcd34d;
+  --svc-active-fg: #6ee7b7;
+  --svc-paused-fg: #fbbf24;
+  --svc-cancelled-fg: #a3a3a3;
+
   color-scheme: dark;
 }
 
@@ -278,6 +286,12 @@ body {
   --cs-on-hold-fg: #b45309;
   --cs-completed-fg: #0369a1;
   --cs-churned-fg: #57534e;
+
+  --svc-draft-fg: #57534e;
+  --svc-pending-fg: #92620a;
+  --svc-active-fg: #047857;
+  --svc-paused-fg: #b45309;
+  --svc-cancelled-fg: #57534e;
 
   color-scheme: light;
 }

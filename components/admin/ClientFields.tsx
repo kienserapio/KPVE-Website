@@ -19,7 +19,6 @@ export type ClientFieldDefaults = {
   phone?: string | null;
   category?: ServiceCategory;
   status?: ClientStatus;
-  value?: string | null;
   assignedStaffId?: string | null;
   notes?: string | null;
 };
@@ -28,13 +27,19 @@ const selectClass =
   "w-full rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2.5 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25";
 
 /**
- * The shared field set for creating and editing a client. Both flows post the
- * same names; only the wrapping action and buttons differ.
+ * Fields for creating and editing a client.
+ *
+ * `create` is deliberately the shorter form: who they are, who owns them, and
+ * anything worth noting. Category and status are triage that belongs to a
+ * client you already have, and what they pay is a list of services attached on
+ * their own page — neither is a decision worth blocking "add this person" on.
  */
 export function ClientFields({
+  variant = "edit",
   defaults = {},
   staffOptions,
 }: {
+  variant?: "create" | "edit";
   defaults?: ClientFieldDefaults;
   staffOptions: StaffOption[];
 }) {
@@ -78,47 +83,40 @@ export function ClientFields({
         </div>
       </div>
 
-      <div className="grid gap-5 sm:grid-cols-3">
-        <div>
-          <AdminLabel htmlFor="category">Category</AdminLabel>
-          <select
-            id="category"
-            name="category"
-            defaultValue={defaults.category ?? "general"}
-            className={selectClass}
-          >
-            {SERVICE_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {CATEGORY_LABELS[c]}
-              </option>
-            ))}
-          </select>
+      {variant === "edit" && (
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div>
+            <AdminLabel htmlFor="category">Category</AdminLabel>
+            <select
+              id="category"
+              name="category"
+              defaultValue={defaults.category ?? "general"}
+              className={selectClass}
+            >
+              {SERVICE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <AdminLabel htmlFor="status">Status</AdminLabel>
+            <select
+              id="status"
+              name="status"
+              defaultValue={defaults.status ?? "active"}
+              className={selectClass}
+            >
+              {CLIENT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {CLIENT_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <AdminLabel htmlFor="status">Status</AdminLabel>
-          <select
-            id="status"
-            name="status"
-            defaultValue={defaults.status ?? "active"}
-            className={selectClass}
-          >
-            {CLIENT_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {CLIENT_STATUS_LABELS[s]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <AdminLabel htmlFor="value">Deal / value</AdminLabel>
-          <AdminInput
-            id="value"
-            name="value"
-            defaultValue={defaults.value ?? ""}
-            placeholder="e.g. $2,000/mo"
-          />
-        </div>
-      </div>
+      )}
 
       <div>
         <AdminLabel htmlFor="assignedStaffId">Account owner</AdminLabel>

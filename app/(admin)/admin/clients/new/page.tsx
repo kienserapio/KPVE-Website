@@ -19,7 +19,8 @@ export default async function NewClientPage() {
         </Link>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight">New client</h1>
         <p className="mt-1 text-sm text-[var(--admin-fg-muted)]">
-          Add someone you&apos;re working with outside the enquiry pipeline.
+          Just who they are. You&apos;ll add what they pay for — services, prices
+          and billing cycles — on their page next.
         </p>
       </div>
 

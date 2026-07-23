@@ -2,23 +2,31 @@ import Link from "next/link";
 
 import { verifySession } from "@/lib/dal/session";
 import { getDashboardData } from "@/lib/dal/dashboard";
-import { formatRelative } from "@/lib/utils";
+import { formatDate, formatRelative } from "@/lib/utils";
+import { formatMoney, formatRate, primaryTotal } from "@/lib/billing";
 import {
   Card,
   CategoryBadge,
+  Money,
   StatCard,
   StatusBadge,
   Table,
   Td,
   Th,
 } from "@/components/admin/ui";
-import { WeeklyBars, PipelineBars, CategoryBars } from "@/components/admin/charts";
+import {
+  WeeklyBars,
+  PipelineBars,
+  CategoryBars,
+  RevenueBars,
+} from "@/components/admin/charts";
 
 export default async function OverviewPage() {
   const staff = await verifySession();
   const data = await getDashboardData();
 
   const firstName = staff.name.split(" ")[0] || "there";
+  const revenue = primaryTotal(data.revenue.totals);
 
   return (
     <div className="flex flex-col gap-6">
@@ -27,16 +35,46 @@ export default async function OverviewPage() {
           Welcome back, {firstName}
         </h1>
         <p className="mt-1 text-sm text-[var(--admin-fg-muted)]">
-          Here&apos;s where things stand across enquiries and clients.
+          Here&apos;s where things stand across revenue, enquiries and clients.
         </p>
       </div>
 
-      {/* KPIs */}
+      {/* Money first — the row the business is actually run on. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="MRR"
+          value={formatMoney(revenue.mrrCents, revenue.currency)}
+          accent
+          hint={
+            revenue.mixed
+              ? `Largest currency (${revenue.currency})`
+              : "Recurring, per month"
+          }
+        />
+        <StatCard
+          label="ARR"
+          value={formatMoney(revenue.arrCents, revenue.currency)}
+          hint="MRR × 12"
+        />
+        <StatCard
+          label="One-off booked"
+          value={formatMoney(revenue.oneOffCents, revenue.currency)}
+          hint="Projects, not recurring"
+        />
+        <StatCard
+          label="Paying clients"
+          value={data.revenue.clientsBilling}
+          hint={`${data.revenue.activeLines} active service${
+            data.revenue.activeLines === 1 ? "" : "s"
+          }`}
+        />
+      </div>
+
+      {/* Pipeline KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="New enquiries"
           value={data.leadStats.newCount}
-          accent
           hint="Awaiting first contact"
         />
         <StatCard
@@ -54,6 +92,62 @@ export default async function OverviewPage() {
           value={`${data.conversionRate}%`}
           hint="Enquiries won, all time"
         />
+      </div>
+
+      {/* Revenue detail */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <SectionCard
+          title="Revenue by service"
+          subtitle="Monthly equivalent"
+          className="lg:col-span-2"
+          action={<CardLink href="/admin/services">Catalogue</CardLink>}
+        >
+          <RevenueBars data={data.revenue.byService} />
+        </SectionCard>
+
+        <SectionCard
+          title="Upcoming bills"
+          subtitle="Next 30 days"
+          action={<CardLink href="/admin/clients">All clients</CardLink>}
+        >
+          {data.revenue.upcoming.length === 0 ? (
+            <p className="text-sm text-[var(--admin-fg-muted)]">
+              Nothing scheduled. Add a service to a client to start a cycle.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-[var(--admin-border)]">
+              {data.revenue.upcoming.map((bill) => (
+                <li key={bill.id} className="py-2.5 first:pt-0 last:pb-0">
+                  <Link href={`/admin/clients/${bill.clientId}`} className="group block">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="truncate text-sm text-[var(--admin-fg)] group-hover:text-[var(--admin-accent)]">
+                        {bill.clientName}
+                      </p>
+                      <Money className="shrink-0 text-sm font-medium">
+                        {formatRate(bill.amountCents, bill.currency, bill.interval)}
+                      </Money>
+                    </div>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs">
+                      <span className="truncate text-[var(--admin-fg-subtle)]">
+                        {bill.label}
+                      </span>
+                      <span className="text-[var(--admin-fg-subtle)]">·</span>
+                      <span
+                        className={
+                          bill.overdue
+                            ? "shrink-0 font-medium text-red-500"
+                            : "shrink-0 text-[var(--admin-fg-muted)]"
+                        }
+                      >
+                        {bill.overdue ? "Overdue" : formatDate(bill.dueAt)}
+                      </span>
+                    </p>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
       </div>
 
       {/* Charts */}

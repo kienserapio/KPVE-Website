@@ -45,9 +45,6 @@ export async function createClientAction(
     company: formData.get("company") ?? undefined,
     email: formData.get("email"),
     phone: formData.get("phone") ?? undefined,
-    category: formData.get("category") || undefined,
-    status: formData.get("status") || undefined,
-    value: formData.get("value") ?? undefined,
     assignedStaffId: formData.get("assignedStaffId") ?? undefined,
     notes: formData.get("notes") ?? undefined,
   });
@@ -81,7 +78,6 @@ export async function updateClientAction(
     phone: formData.get("phone") ?? undefined,
     category: formData.get("category") || undefined,
     status: formData.get("status") || undefined,
-    value: formData.get("value") ?? undefined,
     assignedStaffId: formData.get("assignedStaffId") ?? undefined,
     notes: formData.get("notes") ?? undefined,
   });

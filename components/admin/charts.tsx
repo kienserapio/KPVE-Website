@@ -1,5 +1,7 @@
 import type { TimePoint, CategoryCount } from "@/lib/dal/dashboard";
+import type { ServiceRevenue } from "@/lib/dal/services";
 import type { LeadStatus } from "@/lib/db/schema";
+import { formatMoney } from "@/lib/billing";
 import { CATEGORY_LABELS, STATUS_LABELS } from "./ui";
 
 /* ---------------------------------------------------------------------------
@@ -96,6 +98,52 @@ export function PipelineBars({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Where the recurring money comes from — one bar per service, monthly
+ * equivalent. The amount is printed on the row rather than on an axis: there
+ * are only a handful of bars, and an exact number beats reading a gridline.
+ */
+export function RevenueBars({ data }: { data: ServiceRevenue[] }) {
+  const shown = data.filter((d) => d.mrrCents > 0);
+
+  if (shown.length === 0) {
+    return (
+      <p className="text-sm text-[var(--admin-fg-muted)]">
+        No recurring revenue yet. Put a client on a service and it shows up here.
+      </p>
+    );
+  }
+
+  const max = Math.max(1, ...shown.map((d) => d.mrrCents));
+
+  return (
+    <div className="flex flex-col gap-3">
+      {shown.map((d) => {
+        const pct = Math.max(3, (d.mrrCents / max) * 100);
+        return (
+          <div key={`${d.label}-${d.currency}`} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 truncate text-xs text-[var(--admin-fg-muted)]">
+              {d.label}
+            </span>
+            <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-[var(--admin-surface-2)]">
+              <div
+                className="h-full rounded-full bg-[var(--admin-accent)]"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="w-20 shrink-0 text-right text-xs font-medium tabular-nums text-[var(--admin-fg)]">
+              {formatMoney(d.mrrCents, d.currency)}
+            </span>
+          </div>
+        );
+      })}
+      <p className="mt-1 text-xs text-[var(--admin-fg-subtle)]">
+        Per month. Weekly lines are counted at 52/12, annual at 1/12.
+      </p>
     </div>
   );
 }

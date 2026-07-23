@@ -31,6 +31,7 @@ export function ClientEditor({
         <input type="hidden" name="clientId" value={client.id} />
 
         <ClientFields
+          variant="edit"
           defaults={{
             name: client.name,
             company: client.company,
@@ -38,12 +39,23 @@ export function ClientEditor({
             phone: client.phone,
             category: client.category,
             status: client.status,
-            value: client.value,
             assignedStaffId: client.assignedStaffId,
             notes: client.notes,
           }}
           staffOptions={staffOptions}
         />
+
+        {client.legacyValue && (
+          <p className="rounded-lg border border-[var(--admin-border)] bg-[var(--admin-surface-2)] px-4 py-3 text-xs text-[var(--admin-fg-muted)]">
+            <span className="font-medium text-[var(--admin-fg)]">
+              Old deal / value note:
+            </span>{" "}
+            {client.legacyValue}
+            <br />
+            Add it as a service above to have it counted in MRR — this note is
+            kept read-only and will be removed once every client is moved across.
+          </p>
+        )}
 
         {state.error && (
           <p

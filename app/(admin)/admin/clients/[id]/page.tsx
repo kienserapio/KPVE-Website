@@ -3,8 +3,10 @@ import { notFound } from "next/navigation";
 
 import { verifySession } from "@/lib/dal/session";
 import { getClient } from "@/lib/dal/clients";
+import { listServices } from "@/lib/dal/services";
 import { listActiveStaff } from "@/lib/dal/staff";
-import { formatDateTime } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/utils";
+import { formatMoney, primaryTotal } from "@/lib/billing";
 import {
   Card,
   CategoryBadge,
@@ -12,6 +14,10 @@ import {
 } from "@/components/admin/ui";
 import { ClientEditor } from "@/components/admin/ClientEditor";
 import { ClientTasks } from "@/components/admin/ClientTasks";
+import {
+  ClientServices,
+  RevenueSummaryStrip,
+} from "@/components/admin/ClientServices";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -26,10 +32,21 @@ export default async function ClientDetailPage({
   const { id } = await params;
   if (!UUID_RE.test(id)) notFound();
 
-  const [client, staffOptions] = await Promise.all([getClient(id), listActiveStaff()]);
+  const [client, staffOptions, catalogue] = await Promise.all([
+    getClient(id),
+    listActiveStaff(),
+    listServices(),
+  ]);
   if (!client) notFound();
 
   const openTasks = client.tasks.filter((t) => !t.done).length;
+  const activeServices = client.services.filter((s) => s.status === "active");
+  const headline = primaryTotal(client.revenue);
+
+  // The soonest thing to bill — the one date worth putting in the header.
+  const nextBill = activeServices
+    .filter((s) => s.nextBillAt)
+    .sort((a, b) => a.nextBillAt!.getTime() - b.nextBillAt!.getTime())[0];
 
   return (
     <div className="flex flex-col gap-6">
@@ -51,8 +68,70 @@ export default async function ClientDetailPage({
         </p>
       </div>
 
+      {/* The money line — what this relationship is worth, before anything else. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryTile
+          label="MRR"
+          value={formatMoney(headline.mrrCents, headline.currency)}
+          hint={headline.mixed ? "Largest currency — see breakdown below" : "Recurring, per month"}
+          accent
+        />
+        <SummaryTile
+          label="ARR"
+          value={formatMoney(headline.arrCents, headline.currency)}
+          hint="MRR × 12"
+        />
+        <SummaryTile
+          label="Services"
+          value={String(activeServices.length)}
+          hint={
+            client.services.length > activeServices.length
+              ? `${client.services.length - activeServices.length} not active`
+              : "Active lines"
+          }
+        />
+        <SummaryTile
+          label="Next bill"
+          value={nextBill?.nextBillAt ? formatDate(nextBill.nextBillAt) : "—"}
+          hint={nextBill ? nextBill.label : "Nothing scheduled"}
+        />
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">
+          <Card className="p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  Services &amp; billing
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                  Everything this client pays for. One line each.
+                </p>
+              </div>
+              <Link
+                href="/admin/services"
+                className="shrink-0 text-xs font-medium text-[var(--admin-accent)] hover:underline"
+              >
+                Manage catalogue →
+              </Link>
+            </div>
+
+            {client.revenue.length > 1 && (
+              <div className="mt-4 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-surface-2)] p-4">
+                <RevenueSummaryStrip totals={client.revenue} />
+              </div>
+            )}
+
+            <div className="mt-5">
+              <ClientServices
+                clientId={client.id}
+                services={client.services}
+                catalogue={catalogue}
+              />
+            </div>
+          </Card>
+
           <Card className="p-6">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
@@ -109,14 +188,6 @@ export default async function ClientDetailPage({
                 )}
               </dd>
             </div>
-            <div>
-              <dt className="text-xs text-[var(--admin-fg-subtle)]">Deal / value</dt>
-              <dd className="mt-0.5">
-                {client.value ?? (
-                  <span className="text-[var(--admin-fg-subtle)]">Not set</span>
-                )}
-              </dd>
-            </div>
             {client.sourceLeadId && (
               <div>
                 <dt className="text-xs text-[var(--admin-fg-subtle)]">Origin</dt>
@@ -147,5 +218,33 @@ export default async function ClientDetailPage({
         </Card>
       </div>
     </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  hint,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  accent?: boolean;
+}) {
+  return (
+    <Card className="p-5">
+      <p className="text-xs font-medium uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+        {label}
+      </p>
+      <p
+        className={`mt-2 text-2xl font-semibold tabular-nums ${
+          accent ? "text-[var(--admin-accent)]" : "text-[var(--admin-fg)]"
+        }`}
+      >
+        {value}
+      </p>
+      {hint && <p className="mt-1 truncate text-xs text-[var(--admin-fg-muted)]">{hint}</p>}
+    </Card>
   );
 }

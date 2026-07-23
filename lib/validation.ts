@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { CURRENCIES, parseAmountToCents } from "@/lib/billing";
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -118,6 +120,11 @@ const emptyToUndefined = z
   .optional()
   .or(z.literal("").transform(() => undefined));
 
+/**
+ * Creating a client asks for identity and nothing else. Money is not a field
+ * here on purpose — a client has many billable services, so they are attached
+ * afterwards on the client's own page (see createClientServiceSchema).
+ */
 export const createClientSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(200, "Name is too long"),
   company: emptyToUndefined.pipe(z.string().max(200).optional()),
@@ -129,9 +136,6 @@ export const createClientSchema = z.object({
     .email("Enter a valid email address")
     .transform(normalizeEmail),
   phone: emptyToUndefined.pipe(z.string().max(50).optional()),
-  category: serviceCategorySchema.default("general"),
-  status: clientStatusSchema.default("active"),
-  value: emptyToUndefined.pipe(z.string().max(200).optional()),
   assignedStaffId: optionalStaffId,
   notes: z.string().max(10000).optional(),
 });
@@ -150,7 +154,6 @@ export const updateClientSchema = z.object({
   phone: emptyToUndefined.pipe(z.string().max(50).optional()),
   category: serviceCategorySchema.optional(),
   status: clientStatusSchema.optional(),
-  value: emptyToUndefined.pipe(z.string().max(200).optional()),
   assignedStaffId: optionalStaffId,
   notes: z.string().max(10000).optional(),
 });
@@ -175,4 +178,113 @@ export const createTaskSchema = z.object({
 
 export const convertLeadSchema = z.object({
   leadId: z.string().uuid(),
+});
+
+/* ---------------------------------------------------------------------------
+   Services (the billable catalogue) and client services (what a client is on)
+--------------------------------------------------------------------------- */
+
+export const billingIntervalSchema = z.enum([
+  "one_off",
+  "weekly",
+  "monthly",
+  "quarterly",
+  "annually",
+]);
+
+export const clientServiceStatusSchema = z.enum([
+  "draft",
+  "pending_payment",
+  "active",
+  "paused",
+  "cancelled",
+]);
+
+export const currencySchema = z.enum(CURRENCIES).default("AUD");
+
+/**
+ * Money arrives as whatever the person typed — "$11", "11.00", "1,100". Parse
+ * it to integer cents here so nothing downstream ever sees a float or a string.
+ */
+const amountToCents = z
+  .string({ error: "Amount is required" })
+  .trim()
+  .transform((raw, ctx) => {
+    const cents = parseAmountToCents(raw);
+    if (cents === null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Enter an amount like 11 or 11.50",
+      });
+      return z.NEVER;
+    }
+    return cents;
+  });
+
+/**
+ * "" → undefined; "YYYY-MM-DD" (a date input) → local midnight on that day.
+ * The explicit time matters: `new Date("2026-07-23")` is parsed as UTC, which
+ * lands on the 22nd for anyone west of Greenwich.
+ */
+const optionalDate = z
+  .string()
+  .trim()
+  .optional()
+  .or(z.literal("").transform(() => undefined))
+  .transform((raw, ctx) => {
+    if (!raw) return undefined;
+    const parsed = new Date(/^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw);
+    if (Number.isNaN(parsed.getTime())) {
+      ctx.addIssue({ code: "custom", message: "That date isn't valid" });
+      return z.NEVER;
+    }
+    return parsed;
+  });
+
+export const createServiceSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the service a name")
+    .max(120, "Name is too long"),
+  description: emptyToUndefined.pipe(z.string().max(1000).optional()),
+  defaultAmount: amountToCents,
+  defaultCurrency: currencySchema,
+  defaultInterval: billingIntervalSchema.default("monthly"),
+});
+
+export const updateServiceSchema = createServiceSchema.extend({
+  serviceId: z.string().uuid(),
+  isActive: z
+    .union([z.literal("on"), z.literal("true"), z.literal("false"), z.undefined()])
+    .transform((v) => v === "on" || v === "true"),
+});
+
+export const createClientServiceSchema = z.object({
+  clientId: z.string().uuid(),
+  // "" = a bespoke line with no catalogue entry behind it.
+  serviceId: z
+    .string()
+    .uuid()
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  label: z.string().trim().min(1, "Give this line a name").max(200, "Name is too long"),
+  amount: amountToCents,
+  currency: currencySchema,
+  interval: billingIntervalSchema,
+  status: clientServiceStatusSchema.default("active"),
+  startedAt: optionalDate,
+  notes: emptyToUndefined.pipe(z.string().max(2000).optional()),
+});
+
+export const updateClientServiceSchema = z.object({
+  clientServiceId: z.string().uuid(),
+  label: z.string().trim().min(1, "Give this line a name").max(200).optional(),
+  amount: amountToCents.optional(),
+  currency: currencySchema.optional(),
+  interval: billingIntervalSchema.optional(),
+  status: clientServiceStatusSchema.optional(),
+  startedAt: optionalDate,
+  nextBillAt: optionalDate,
+  notes: emptyToUndefined.pipe(z.string().max(2000).optional()),
 });

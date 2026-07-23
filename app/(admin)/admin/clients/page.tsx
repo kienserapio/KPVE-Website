@@ -4,11 +4,13 @@ import { verifySession } from "@/lib/dal/session";
 import { listClients, getClientStats } from "@/lib/dal/clients";
 import { clientFiltersSchema } from "@/lib/validation";
 import { formatRelative } from "@/lib/utils";
+import { formatMoney, primaryTotal } from "@/lib/billing";
 import {
   Card,
   CategoryBadge,
   ClientStatusBadge,
   EmptyState,
+  Money,
   StatCard,
   Table,
   Td,
@@ -40,6 +42,7 @@ export default async function ClientsPage({
   ]);
 
   const hasFilters = Boolean(filters.status || filters.category || filters.q);
+  const revenue = primaryTotal(stats.revenue);
 
   const exportQuery = new URLSearchParams();
   if (filters.status) exportQuery.set("status", filters.status);
@@ -67,10 +70,19 @@ export default async function ClientsPage({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Active" value={stats.active} accent hint="Currently working with" />
-        <StatCard label="Prospects" value={stats.prospects} hint="Not yet won" />
+        <StatCard
+          label="MRR"
+          value={formatMoney(revenue.mrrCents, revenue.currency)}
+          accent
+          hint={
+            revenue.mixed
+              ? `Largest currency (${revenue.currency})`
+              : "Recurring, all active services"
+          }
+        />
+        <StatCard label="Active" value={stats.active} hint="Currently working with" />
         <StatCard label="Open tasks" value={stats.openTasks} hint="Across all clients" />
-        <StatCard label="Total" value={stats.total} hint="All time" />
+        <StatCard label="Total" value={stats.total} hint={`${stats.prospects} prospects`} />
       </div>
 
       <Card>
@@ -118,7 +130,7 @@ export default async function ClientsPage({
                   <Th>Category</Th>
                   <Th>Status</Th>
                   <Th>Open tasks</Th>
-                  <Th>Value</Th>
+                  <Th className="text-right">MRR</Th>
                   <Th className="text-right">Updated</Th>
                 </tr>
               </thead>
@@ -155,8 +167,14 @@ export default async function ClientsPage({
                         <span className="text-xs text-[var(--admin-fg-subtle)]">—</span>
                       )}
                     </Td>
-                    <Td className="text-[var(--admin-fg-muted)]">
-                      {client.value ?? <span className="text-[var(--admin-fg-subtle)]">—</span>}
+                    <Td className="text-right">
+                      {client.mrrCents > 0 ? (
+                        <Money className="font-medium">
+                          {formatMoney(client.mrrCents, client.mrrCurrency)}
+                        </Money>
+                      ) : (
+                        <span className="text-xs text-[var(--admin-fg-subtle)]">—</span>
+                      )}
                     </Td>
                     <Td className="whitespace-nowrap text-right text-[var(--admin-fg-subtle)]">
                       {formatRelative(client.updatedAt)}

@@ -5,13 +5,21 @@ import { and, asc, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   clients,
+  clientServices,
   clientTasks,
   staffUsers,
   type ClientStatus,
   type ServiceCategory,
 } from "@/lib/db/schema";
+import { DEFAULT_CURRENCY, summarize } from "@/lib/billing";
 import { requireSession } from "./session";
 import { logActivity } from "./activity";
+import {
+  listClientServices,
+  summarizeClientServices,
+  type ClientServiceItem,
+} from "./services";
+import type { CurrencyTotal } from "@/lib/billing";
 
 export const PAGE_SIZE = 25;
 
@@ -23,7 +31,9 @@ export type ClientListItem = {
   phone: string | null;
   category: ServiceCategory;
   status: ClientStatus;
-  value: string | null;
+  /** Monthly recurring revenue from this client's active services, in cents. */
+  mrrCents: number;
+  mrrCurrency: string;
   assignedStaffName: string | null;
   openTasks: number;
   createdAt: Date;
@@ -50,7 +60,8 @@ export type ClientDetail = {
   phone: string | null;
   category: ServiceCategory;
   status: ClientStatus;
-  value: string | null;
+  /** Pre-billing freeform "deal / value". Shown read-only where still set. */
+  legacyValue: string | null;
   assignedStaffId: string | null;
   assignedStaffName: string | null;
   notes: string | null;
@@ -58,6 +69,9 @@ export type ClientDetail = {
   createdAt: Date;
   updatedAt: Date;
   tasks: ClientTaskItem[];
+  services: ClientServiceItem[];
+  /** Per-currency rollup of the active services above. */
+  revenue: CurrencyTotal[];
 };
 
 /* ---------------------------------------------------------------------------
@@ -68,6 +82,40 @@ export type ClientDetail = {
 const openTasksExpr = sql<number>`(
   select count(*)::int from ${clientTasks}
   where ${clientTasks.clientId} = ${clients.id} and ${clientTasks.done} = false
+)`;
+
+/**
+ * Monthly recurring revenue per client, in cents, from active services only.
+ * The interval factors mirror lib/billing.ts — weekly is 52/12, not 4, and
+ * one-offs are excluded because they are booked revenue, not recurring.
+ * Computed in SQL so the list page stays one query instead of N+1.
+ */
+const mrrCentsExpr = sql<number>`(
+  select coalesce(round(sum(
+    case ${clientServices.interval}
+      when 'weekly'    then ${clientServices.amountCents} * 52.0 / 12.0
+      when 'monthly'   then ${clientServices.amountCents}
+      when 'quarterly' then ${clientServices.amountCents} / 3.0
+      when 'annually'  then ${clientServices.amountCents} / 12.0
+      else 0
+    end
+  )), 0)::int
+  from ${clientServices}
+  where ${clientServices.clientId} = ${clients.id}
+    and ${clientServices.status} = 'active'
+)`;
+
+/**
+ * Which currency that number is in — the client's biggest active line. Mixing
+ * currencies inside one client is rare; when it happens the detail page breaks
+ * the total out properly, and this column shows the dominant one.
+ */
+const mrrCurrencyExpr = sql<string>`(
+  select ${clientServices.currency} from ${clientServices}
+  where ${clientServices.clientId} = ${clients.id}
+    and ${clientServices.status} = 'active'
+  order by ${clientServices.amountCents} desc
+  limit 1
 )`;
 
 export async function listClients(filters: {
@@ -95,7 +143,7 @@ export async function listClients(filters: {
   }
   const where = conditions.length ? and(...conditions) : undefined;
 
-  const [items, [{ total }]] = await Promise.all([
+  const [rows, [{ total }]] = await Promise.all([
     db
       .select({
         id: clients.id,
@@ -105,7 +153,8 @@ export async function listClients(filters: {
         phone: clients.phone,
         category: clients.category,
         status: clients.status,
-        value: clients.value,
+        mrrCents: mrrCentsExpr,
+        mrrCurrency: mrrCurrencyExpr,
         assignedStaffName: staffUsers.name,
         openTasks: openTasksExpr,
         createdAt: clients.createdAt,
@@ -119,6 +168,12 @@ export async function listClients(filters: {
       .offset((page - 1) * PAGE_SIZE),
     db.select({ total: count() }).from(clients).where(where),
   ]);
+
+  // The currency subquery returns null for a client with no active services.
+  const items: ClientListItem[] = rows.map((row) => ({
+    ...row,
+    mrrCurrency: row.mrrCurrency ?? DEFAULT_CURRENCY,
+  }));
 
   return {
     items,
@@ -135,7 +190,8 @@ export type ClientExportRow = {
   phone: string | null;
   category: ServiceCategory;
   status: ClientStatus;
-  value: string | null;
+  mrrCents: number;
+  mrrCurrency: string | null;
   assignedStaffName: string | null;
   openTasks: number;
   createdAt: Date;
@@ -173,7 +229,8 @@ export async function exportClients(filters: {
       phone: clients.phone,
       category: clients.category,
       status: clients.status,
-      value: clients.value,
+      mrrCents: mrrCentsExpr,
+      mrrCurrency: mrrCurrencyExpr,
       assignedStaffName: staffUsers.name,
       openTasks: openTasksExpr,
       createdAt: clients.createdAt,
@@ -197,7 +254,7 @@ export async function getClient(id: string): Promise<ClientDetail | null> {
       phone: clients.phone,
       category: clients.category,
       status: clients.status,
-      value: clients.value,
+      legacyValue: clients.legacyValue,
       assignedStaffId: clients.assignedStaffId,
       assignedStaffName: staffUsers.name,
       notes: clients.notes,
@@ -211,6 +268,8 @@ export async function getClient(id: string): Promise<ClientDetail | null> {
     .limit(1);
 
   if (!row) return null;
+
+  const services = await listClientServices(id);
 
   // Open tasks first, then by due date (nulls last), then newest.
   const taskRows = await db
@@ -238,7 +297,7 @@ export async function getClient(id: string): Promise<ClientDetail | null> {
     overdue: !t.done && t.dueAt ? t.dueAt.getTime() < now : false,
   }));
 
-  return { ...row, tasks };
+  return { ...row, tasks, services, revenue: summarizeClientServices(services) };
 }
 
 /** The client promoted from this lead, if any — drives the lead's convert UI. */
@@ -258,15 +317,25 @@ export type ClientStats = {
   prospects: number;
   openTasks: number;
   byStatus: Record<ClientStatus, number>;
+  /** Per-currency MRR/ARR across every active service on every client. */
+  revenue: CurrencyTotal[];
 };
 
 export async function getClientStats(): Promise<ClientStats> {
   await requireSession();
 
-  const [statusRows, [{ total }], [{ openTasks }]] = await Promise.all([
+  const [statusRows, [{ total }], [{ openTasks }], billingRows] = await Promise.all([
     db.select({ status: clients.status, n: count() }).from(clients).groupBy(clients.status),
     db.select({ total: count() }).from(clients),
     db.select({ openTasks: count() }).from(clientTasks).where(eq(clientTasks.done, false)),
+    db
+      .select({
+        amountCents: clientServices.amountCents,
+        currency: clientServices.currency,
+        interval: clientServices.interval,
+      })
+      .from(clientServices)
+      .where(eq(clientServices.status, "active")),
   ]);
 
   const byStatus = {
@@ -284,6 +353,7 @@ export async function getClientStats(): Promise<ClientStats> {
     prospects: byStatus.prospect,
     openTasks,
     byStatus,
+    revenue: summarize(billingRows),
   };
 }
 
@@ -291,14 +361,16 @@ export async function getClientStats(): Promise<ClientStats> {
    Writes
 --------------------------------------------------------------------------- */
 
+/**
+ * Identity only. Category, status and billing are all set afterwards on the
+ * client's own page — creating a client should take fifteen seconds, and what
+ * they pay for is a list, not a field on this form.
+ */
 export async function createClient(input: {
   name: string;
   company?: string;
   email: string;
   phone?: string;
-  category?: ServiceCategory;
-  status?: ClientStatus;
-  value?: string;
   assignedStaffId?: string | null;
   notes?: string;
 }): Promise<{ id: string }> {
@@ -311,9 +383,6 @@ export async function createClient(input: {
       company: input.company ?? null,
       email: input.email,
       phone: input.phone ?? null,
-      category: input.category ?? "general",
-      status: input.status ?? "active",
-      value: input.value ?? null,
       assignedStaffId: input.assignedStaffId ?? null,
       notes: input.notes ?? null,
     })
@@ -340,7 +409,6 @@ export async function updateClient(
     phone?: string;
     category?: ServiceCategory;
     status?: ClientStatus;
-    value?: string;
     assignedStaffId?: string | null;
     notes?: string;
   },
@@ -355,7 +423,6 @@ export async function updateClient(
     "phone",
     "category",
     "status",
-    "value",
     "assignedStaffId",
     "notes",
   ] as const) {

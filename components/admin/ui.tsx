@@ -5,6 +5,7 @@ import type {
   ServiceCategory,
   Priority,
   ClientStatus,
+  ClientServiceStatus,
 } from "@/lib/db/schema";
 
 /* ---------------------------------------------------------------------------
@@ -203,6 +204,65 @@ export const CLIENT_STATUSES: ClientStatus[] = [
 
 export function ClientStatusBadge({ status }: { status: ClientStatus }) {
   return <ColorPill label={CLIENT_STATUS_LABELS[status]} colorVar={CLIENT_STATUS_VAR[status]} />;
+}
+
+/* ---- Billable service status ---- */
+
+const SERVICE_STATUS_VAR: Record<ClientServiceStatus, string> = {
+  draft: "--svc-draft-fg",
+  pending_payment: "--svc-pending-fg",
+  active: "--svc-active-fg",
+  paused: "--svc-paused-fg",
+  cancelled: "--svc-cancelled-fg",
+};
+
+export const SERVICE_STATUS_LABELS: Record<ClientServiceStatus, string> = {
+  draft: "Draft",
+  pending_payment: "Awaiting payment",
+  active: "Active",
+  paused: "Paused",
+  cancelled: "Cancelled",
+};
+
+export const SERVICE_STATUSES: ClientServiceStatus[] = [
+  "draft",
+  "pending_payment",
+  "active",
+  "paused",
+  "cancelled",
+];
+
+export function ServiceStatusBadge({ status }: { status: ClientServiceStatus }) {
+  return <ColorPill label={SERVICE_STATUS_LABELS[status]} colorVar={SERVICE_STATUS_VAR[status]} />;
+}
+
+/* ---------------------------------------------------------------------------
+   Money
+
+   Amounts are always tabular-nums and right-alignable: a column of prices that
+   doesn't line up on the decimal is a column you have to read twice.
+--------------------------------------------------------------------------- */
+
+export function Money({
+  children,
+  className,
+  muted = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  muted?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "tabular-nums",
+        muted ? "text-[var(--admin-fg-muted)]" : "text-[var(--admin-fg)]",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
 }
 
 /* ---------------------------------------------------------------------------
