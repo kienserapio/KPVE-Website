@@ -21,6 +21,7 @@ import {
 } from "@/lib/payments";
 import { requireSession } from "./session";
 import { logActivity } from "./activity";
+import { reconcilePaidService } from "./invoices";
 
 /* ---------------------------------------------------------------------------
    Taking money.
@@ -64,6 +65,8 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
       clientId: clientServices.clientId,
       label: clientServices.label,
       amountCents: clientServices.amountCents,
+      unitAmountCents: clientServices.unitAmountCents,
+      quantity: clientServices.quantity,
       currency: clientServices.currency,
       interval: clientServices.interval,
       status: clientServices.status,
@@ -86,6 +89,9 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
     clientId: line.clientId,
     label: line.label,
     amountCents: line.amountCents,
+    // Defensive: a line predating the quantity backfill reads as 1 × the total.
+    unitAmountCents: line.unitAmountCents || line.amountCents,
+    quantity: line.quantity || 1,
     currency: line.currency,
     interval: line.interval,
     clientName: line.clientName,
@@ -267,6 +273,21 @@ export async function applyPaymentSucceeded(event: PaymentEvent): Promise<ApplyR
       providerRef: event.providerRef,
     },
   });
+
+  // Settle the invoice this payment covers, if there is one. Best-effort by
+  // design: an invoice edge case must never fail a payment that has cleared, so
+  // it is wrapped and swallowed — the ledger row above is the record of truth,
+  // and reconciliation only joins it to the document it pays.
+  try {
+    await reconcilePaidService({
+      clientServiceId: line.id,
+      paymentId: ledgerRow.id,
+      amountCents: event.amountCents || line.amountCents,
+      paidAt: event.paidAt,
+    });
+  } catch (error) {
+    console.error("[applyPaymentSucceeded] invoice reconcile failed", error);
+  }
 
   return { applied: true, clientId: line.clientId };
 }

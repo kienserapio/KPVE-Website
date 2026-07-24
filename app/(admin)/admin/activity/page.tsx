@@ -20,6 +20,8 @@ const ACTION_LABELS: Record<string, string> = {
   "client_service.updated": "Client service changed",
   "client_service.billed": "Service marked billed",
   "client_service.removed": "Client service removed",
+  "client_service.item_added": "Provisioned item added",
+  "client_service.item_removed": "Provisioned item removed",
   "payment.link_created": "Payment link created",
   "payment.link_revoked": "Payment link revoked",
   "payment.succeeded": "Payment received",
@@ -31,6 +33,12 @@ const ACTION_LABELS: Record<string, string> = {
   "document.removed": "Document unlinked",
   "checklist.item_added": "Checklist step added",
   "checklist.item_removed": "Checklist step removed",
+  "settings.updated": "Business settings updated",
+  "invoice.created": "Invoice drafted",
+  "invoice.sent": "Invoice sent",
+  "invoice.paid": "Invoice paid",
+  "invoice.void": "Invoice voided",
+  "invoice.deleted": "Draft invoice deleted",
   "login.success": "Signed in",
   "login.failed": "Failed sign-in attempt",
   logout: "Signed out",
@@ -95,6 +103,20 @@ export default async function ActivityPage() {
                         className="text-[var(--admin-accent)] hover:underline"
                       >
                         View services
+                      </Link>
+                    ) : item.entityType === "invoice" && item.entityId ? (
+                      <Link
+                        href={`/admin/invoices/${item.entityId}`}
+                        className="text-[var(--admin-accent)] hover:underline"
+                      >
+                        View invoice
+                      </Link>
+                    ) : item.entityType === "settings" ? (
+                      <Link
+                        href="/admin/settings"
+                        className="text-[var(--admin-accent)] hover:underline"
+                      >
+                        View settings
                       </Link>
                     ) : (
                       <span className="text-[var(--admin-fg-subtle)]">

@@ -14,8 +14,8 @@ re-authorizes in the DAL layer.
 
 ### Access & shell
 - `/admin` is gated by session cookie (`proxy.ts`) and re-verified per page/action.
-- Sidebar nav: **Overview · Enquiries · Clients · Services · Revenue · Activity**,
-  plus light/dark theme toggle.
+- Sidebar nav: **Overview · Enquiries · Clients · Services · Revenue · Invoices ·
+  Activity · Settings**, plus light/dark theme toggle.
 - No public signup — staff are seeded via `scripts/create-staff-user.ts`.
 
 ### Overview dashboard — `/admin`
@@ -542,3 +542,285 @@ The code for P0–P5 is done. Everything below is account admin and judgement.
 
 Optional, unrelated to Stripe: a **Resend API key** switches on the new-lead
 email that's already stubbed in `app/api/contact/route.ts`.
+
+---
+
+# CRM Prio — Round 2 (23 Jul 26 call)
+
+P0–P5 built the machine. Dimitrios then took a **real client** through it and it
+broke in four places, all of them the same underlying mistake: **the model
+assumes a client is one person buying one of a thing.** A real client is a
+person who owns several companies, each company is billed in its own name for
+the tax office, and one of those lines is "four mailboxes at $11", not "emails".
+
+> **Status: P7.1–P7.6 built.** The public site shows one correct address; a
+> client can be an individual who owns companies; each client and KPVE itself
+> carry billing details; a billable line has a quantity and a list of what was
+> provisioned; and the CRM issues real, printable, GST-aware tax invoices with an
+> unguessable client link. Every change was additive — existing clients kept
+> working untouched (migration `0004` backfills `unit_amount_cents = amount_cents`,
+> `quantity = 1`, `client_type = individual`).
+>
+> **One manual step before use:** run `npm run db:migrate` to apply `0004`, then
+> fill `/admin/settings` (ABN, address, bank). The GST switch is off by default.
+
+## What the call actually asked for
+
+| Ask | What it means in the model |
+|---|---|
+| "support@kpve.com" | One correct public address. `info@kappatos.com` / `info@kpve.com` are wrong and are on the live site. |
+| "onboarding this client as an individual, i should be able to attach their business or company — this client has multiple business' and companies that we manage" | A client record can **own other client records**. One individual, many companies, one relationship. |
+| "better to have an option when making a new client, either as an individual or company" | `client_type` on the client. The create form asks first, and changes shape after. |
+| "if i choose a company, then it should be their business name as their name … a text box so i can assign an individual or person" | For a company, `name` **is** the trading name; the human is a separate `contact_name` field, not the record's identity. |
+| "when we invoice the company, it should have their company information so that they are billed correctly. That company invoice should be reflective so they can claim the expense" | A **billing profile** per client (legal name, ABN, address) and a **real invoice object** that prints an ATO-compliant tax invoice. A payment link is not an invoice — you can't claim a Stripe receipt as a business expense with no ABN on it. |
+| "4 emails with us … add the QTY … calculate $11 x 4" | **Quantity** on a billable line. Unit price × qty, not a retyped total. |
+| "put the email service that has been setup so its attached to the invoice" | Per-line **provisioned items** — the actual mailbox addresses — snapshotted onto the invoice so the client can see what they're paying for. |
+
+Consequence: two structural changes. **A client can be a company owned by
+another client**, and **a billable line has a quantity and a list of what was
+provisioned**. Invoicing is what makes both of them visible to the client.
+
+---
+
+## ✅ P7.1 — `support@kpve.com` — BUILT
+
+The public site advertises two addresses and both are wrong:
+`lib/data.ts` says `info@kappatos.com` (the old brand), `Footer.tsx` says
+`info@kpve.com`. `components/sections/Contact.tsx` falls back to the kappatos
+one if the lookup ever misses.
+
+- Single value in `lib/data.ts` (`CONTACT_INFO`), everything else reads from it —
+  including the Contact section fallback, which stops being a second copy of the
+  address and becomes the same one.
+- `EMAIL_FROM` in `.env.example` moves to `KPVE <support@kpve.com>` so the
+  new-lead notification, when Resend lands, comes from somewhere a reply reaches.
+- `you@kpve.com` in the README / `scripts/create-staff-user.ts` stays — that's a
+  "type your own address here" placeholder for a staff login, not a contact.
+
+## ✅ P7.2 — Individual vs company, and the link between them — BUILT
+
+The ask is **accounts and contacts** (P6) arriving early because a real client
+needed it. It does **not** need the full Salesforce shape to be useful.
+
+**Rejected:** a separate `companies` table. Every company here is billed, has
+services, tasks, documents, a timeline and an owner — it *is* a client. A second
+entity would duplicate all of that and then need joining back together on every
+page. The cheap, correct version is one table that can point at itself.
+
+**`clients` gains three columns:**
+- `client_type` — `individual | company`. Existing rows default to `individual`,
+  which is what they already are.
+- `contact_name` — the person at a company ("Dimitrios Kappatos" on
+  "Rare Gem Exchange Pty Ltd"). Null on an individual, where `name` is the person.
+- `parent_client_id` — self-reference, `ON DELETE SET NULL`. A company points at
+  the individual who owns it. Deleting the individual must orphan the companies,
+  never cascade — those companies are still being billed.
+
+**One level only.** A company cannot own a company. Enforced in the DAL, not by
+a constraint, and stated here so nobody adds a third level by accident: a tree
+of arbitrary depth means every roll-up becomes a recursive query for a case
+nobody has.
+
+**UI**
+- `/admin/clients/new` opens with a two-button choice: **Individual** /
+  **Company**. Everything below re-labels: "Name" becomes "Business name",
+  "Contact person" appears, and a **"Owned by"** picker lists individual clients.
+- The choice is on the create form *and* the editor — a client entered as an
+  individual that turns out to be a company is a one-field fix, not a re-entry.
+- **Individual detail page** gains a **Businesses** card: each company they own,
+  its status, its MRR, and the group total. This is the answer to "this client
+  has multiple businesses that we manage" — one screen, all of it.
+- **Company detail page** shows "Part of **<individual>** →" in the sidebar,
+  next to the origin-enquiry link that's already there.
+- Clients list: a type badge, a type filter beside status/category, and
+  `Type` / `Contact` / `Owned by` columns in the CSV export.
+- Converting a lead still creates an **individual** — a contact form is filled in
+  by a person. Attaching their company is the next click, on the client page.
+
+**Deliberately not done:** merging duplicate clients, contacts as their own
+table with many-per-company, per-contact email. One person per company is what
+was asked for and covers the real client.
+
+## ✅ P7.3 — Billing profile, business details, and GST — BUILT
+
+An invoice a client can claim needs facts the CRM has never stored: who KPVE is,
+who the client legally is, and whether there's GST in the number.
+
+**`clients` gains a billing profile** — all optional, all falling back to the
+contact details when blank:
+- `billing_name` (legal entity: "Rare Gem Exchange Pty Ltd" where the trading
+  name differs), `billing_abn`, `billing_email` (accounts@, which is rarely the
+  person we talk to), `billing_address` (multiline text — addresses are not a
+  schema problem worth solving).
+
+**New table `org_settings`** — a single row, KPVE's own details:
+- Identity: `legal_name`, `trading_name`, `abn`, `address`, `email`
+  (defaults to support@kpve.com), `phone`, `website`.
+- Tax: `gst_registered` (default **false**), `tax_rate_bps` (default `1000` =
+  10%), `prices_include_tax` (default **true**).
+- Invoicing: `invoice_prefix` (default `INV`), `payment_terms_days` (default 14),
+  `invoice_footer`, and EFT details (`bank_name`, `bsb`, `account_name`,
+  `account_number`) for clients who won't use a card.
+
+Why a table and not env vars: it's the same argument that made the service
+catalogue a table. An ABN or a bank account changing must not be a deploy, and
+the person who knows the right value is not the person with access to the host's
+environment. Edited at **`/admin/settings`**.
+
+**The GST decision, made** (it was manual step 8, and invoicing forces it):
+- `gst_registered = false` — the default — prints no tax line at all. Total is
+  the subtotal. Correct, and legal, for a business that isn't registered.
+- `gst_registered = true` with `prices_include_tax = true` — the Australian norm.
+  **Stored amounts do not change.** `$11` stays `$11`; the invoice prints
+  *"Total includes GST of $1.00"*. Nothing in `client_services`, MRR, the payment
+  links or the ledger moves, which is exactly why this is the default when
+  registration happens.
+- `prices_include_tax = false` adds 10% on top of the line total. Offered for
+  completeness; switching it after invoices exist changes what clients pay, so
+  the settings page says so out loud.
+- Maths lives in `lib/billing.ts` beside the MRR factors — one file, integer
+  cents, rounding at the invoice total rather than per line so the parts always
+  sum to the whole.
+
+An **ATO tax invoice** needs: the words "Tax invoice", KPVE's identity and ABN,
+the issue date, a description of what was sold with quantities and prices, the
+GST amount (or a statement that the total includes it), and the buyer's identity
+or ABN once the total is $1,000 or more. The print view produces all of it, and
+the invoice screen warns when a field it needs is blank rather than printing a
+document the client's accountant will bounce.
+
+## ✅ P7.4 — Quantity, and what was actually provisioned — BUILT
+
+**"4 emails at $11" is one line, not four, and not a retyped $44.**
+
+**`client_services` gains:**
+- `unit_amount_cents` — the price of one.
+- `quantity` — integer ≥ 1, default 1.
+- `amount_cents` **stays the line total** and is written as `unit × quantity`.
+
+That last point is the whole design. `amount_cents` is read by the MRR SQL in
+`lib/dal/clients.ts`, by `summarize()`, by the revenue snapshots, by the CSV
+export, by the Stripe `price_data` and by the upcoming-bills list. Keeping it
+the total means **none of them change** and none of them can disagree about what
+a line is worth. The invariant is enforced in one place — the DAL write path —
+and is stated on the column, because a stored derived value that drifts is worse
+than no column. Backfill: `unit_amount_cents = amount_cents`, `quantity = 1`.
+
+**`services` (the catalogue) gains `unit_label`** — "mailbox", "seat", "page",
+null for things not counted. It's what makes the line read *"Emails — 4 ×
+$11.00/mo"* instead of *"Emails — 4 × $11.00/mo"* with no idea what four means.
+
+**New table `client_service_items`** — the actual things set up under a line:
+- `client_service_id` (cascade), `label`, `position`.
+- On the Emails line: `dimitrios@raregem.com.au`, `accounts@…`, one row each.
+  On Hosting: the domains. On a build: the deliverables.
+
+Why a table and not a text blob: these get added and removed one at a time over
+the life of an account (a fifth mailbox in March), they're snapshotted onto
+invoices individually, and "the fourth line of a textarea" is not a thing you
+can delete safely.
+
+**UI**
+- The add/edit service form becomes **Unit price × Qty**, with the total computed
+  live beside it — `$11.00 × 4 = $44.00/mo`. Nobody types the total; nobody can
+  typo it.
+- Picking from the catalogue prefills the unit price, as it does today.
+- Under each line, a **Provisioned** editor: add an address, remove one. When
+  items are present the form offers **"Set quantity to 4 (matching the items)"**
+  rather than silently overwriting a number a person chose — billed quantity and
+  provisioned count *should* match, and when they don't it's usually a mistake
+  worth showing, not fixing behind their back.
+- The line renders `Emails · 4 × $11.00/mo · $44.00/mo` with the addresses under
+  it, so the client page answers "what are they paying for" without opening
+  anything.
+
+## ✅ P7.5 — Invoices — BUILT
+
+The missing object. Today the CRM can *take* money (payment links) and *record*
+it (the ledger), but it cannot produce the document a business needs to book the
+expense. That's the gap the call was actually describing.
+
+**New table `invoices`** — one issued document:
+- `client_id` (cascade), `number` (UNIQUE — `INV-2026-0001`), `status`
+  (`draft | sent | paid | void`), `issue_date`, `due_date`, `currency`.
+- Money: `subtotal_cents`, `tax_cents`, `total_cents`, `amount_paid_cents`,
+  plus the `tax_rate_bps` and `tax_mode` in force when it was issued.
+- **Snapshots of both parties** — `seller_name`, `seller_abn`, `seller_address`,
+  `seller_email` and `bill_to_name`, `bill_to_abn`, `bill_to_email`,
+  `bill_to_address`. Same copy-at-conversion rule this codebase uses everywhere:
+  an issued invoice is a record of a moment. Changing KPVE's address next year
+  must not rewrite last year's invoices — and an invoice that changes after
+  issue is a compliance problem, not a convenience.
+- `public_token` (UNIQUE, 32 hex) — the client's own link, exactly as
+  `/pay/[ref]` works. The link *is* the credential.
+- `notes`, `po_number`, `sent_at`, `paid_at`, `voided_at`, `created_by`.
+
+**New table `invoice_lines`:**
+- `invoice_id` (cascade), `client_service_id` (SET NULL — deleting a billing
+  line must not gut an issued invoice), `label`, `description`,
+- `unit_amount_cents`, `quantity`, `amount_cents`,
+- `details` — the provisioned items, flattened at issue time,
+- `period_start` / `period_end` — "1 Aug – 31 Aug", which is what makes a
+  recurring invoice make sense to whoever files it,
+- `position`.
+
+**`payments` gains `invoice_id`** (nullable, SET NULL) so money and document
+join up. Paying an invoice's link marks it paid through the same
+`applyPaymentSucceeded()` path that already exists — no second way to record
+revenue, ever.
+
+**Numbering.** `INV-<year>-<0001>`, prefix from settings, counter per year. The
+UNIQUE index on `number` is the guarantee; allocation is max+1 with a bounded
+retry, the same pattern as `uniqueSlug()`. Two people pressing "Create invoice"
+at once get two numbers, not one number and a 500.
+
+**Screens**
+- **`/admin/invoices`** — every invoice: number, client, issued, due, total,
+  status. Filters by status and client. Overdue (`sent`, past `due_date`) flags
+  red, and that list is the closest thing an agency has to a collections queue.
+- **`/admin/invoices/[id]`** — the document. Prints properly: `@media print`
+  rules, no chrome, KPVE's details and ABN, bill-to block, the lines with
+  quantities and provisioned items, subtotal / GST / total, payment terms and
+  EFT details. No PDF dependency — the browser's Print to PDF produces the file,
+  and it's the same file the client sees.
+- **`/invoice/[token]`** — the client's read-only copy, same document, with a
+  **Pay now** button when the line has a link.
+- **On the client page** — an **Invoices** card and a **New invoice** action that
+  preselects the lines due, sets the period from each line's cycle, pulls the
+  bill-to from the billing profile (the company's, when invoicing a company),
+  and lands on a **draft** so it can be checked before it's a document. Draft is
+  editable and deletable; **sent** is not — it's void-and-reissue after that,
+  which is how invoices work.
+- **Email it** — mailto with the number, total, due date and the token link,
+  matching the existing payment-link button.
+
+**Invoicing a company owned by an individual** is the case that started this:
+the invoice is raised against the **company** record, carries the company's
+legal name and ABN, and the individual's page lists it under their businesses.
+That is the whole "so they can claim the expense" requirement.
+
+## ✅ P7.6 — Docs — BUILT
+
+`docs/USING-THE-CRM.md` and `docs/CRM.md` get the new walkthrough: create a
+company under an individual, fill the billing profile, add "Emails × 4" with the
+four addresses, raise the invoice, send it, take payment. Plus the settings page
+and the GST switch.
+
+---
+
+### Build order
+
+`✅ P7.1 emails → ✅ P7.2 individual/company → ✅ P7.3 billing profile + org settings + GST → ✅ P7.4 quantity + provisioned items → ✅ P7.5 invoices → ✅ P7.6 docs`
+
+P7.1 is independent. P7.2–P7.4 share one migration and can be built in parallel
+once it lands. P7.5 needs all three: it prints the company's details (P7.2/P7.3),
+the quantities (P7.4), and the tax (P7.3).
+
+### Manual steps this adds
+
+11. **Fill `/admin/settings`** — ABN, address, bank details. An invoice without
+    an ABN is not a tax invoice, and the page says so.
+12. **Decide GST registration.** Off by default. Turning it on changes every
+    invoice printed after that, and not any invoice printed before it.
+13. **Set `support@kpve.com` up as a real mailbox** that someone reads, since
+    it's now the only address on the site.

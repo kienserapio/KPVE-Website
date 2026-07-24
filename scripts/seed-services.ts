@@ -16,8 +16,11 @@ type Seed = {
   name: string;
   slug: string;
   description: string;
+  /** Price of ONE. A client on four mailboxes is one line with a quantity. */
   amountCents: number;
   interval: "one_off" | "weekly" | "monthly" | "quarterly" | "annually";
+  /** What one unit is, so a line reads "4 mailboxes × $11". Null if uncounted. */
+  unitLabel?: string;
 };
 
 const SEEDS: Seed[] = [
@@ -27,6 +30,7 @@ const SEEDS: Seed[] = [
     description: "Hosted business email, per mailbox.",
     amountCents: 1100,
     interval: "monthly",
+    unitLabel: "mailbox",
   },
   {
     name: "Hosting",
@@ -92,10 +96,11 @@ async function main() {
   for (const seed of SEEDS) {
     const rows = await sql`
       insert into services
-        (name, slug, description, default_amount_cents, default_currency, default_interval)
+        (name, slug, description, default_amount_cents, default_currency, default_interval,
+         unit_label)
       values
         (${seed.name}, ${seed.slug}, ${seed.description}, ${seed.amountCents}, 'AUD',
-         ${seed.interval}::billing_interval)
+         ${seed.interval}::billing_interval, ${seed.unitLabel ?? null})
       on conflict (slug) do nothing
       returning id
     `;

@@ -12,16 +12,24 @@ const initialState: ClientActionState = { ok: false, error: null };
 export function ClientForm({
   staffOptions,
   defaults,
+  parentOptions,
 }: {
   staffOptions: StaffOption[];
   defaults?: ClientFieldDefaults;
+  /** Individual clients offered in the "Owned by" picker on a company. */
+  parentOptions?: { id: string; name: string }[];
 }) {
   const [state, formAction, pending] = useActionState(createClientAction, initialState);
 
   return (
     <Card className="p-6">
       <form action={formAction} className="flex flex-col gap-6">
-        <ClientFields variant="create" defaults={defaults} staffOptions={staffOptions} />
+        <ClientFields
+          variant="create"
+          defaults={defaults}
+          staffOptions={staffOptions}
+          parentOptions={parentOptions}
+        />
 
         {state.error && (
           <p

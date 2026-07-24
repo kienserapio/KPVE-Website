@@ -46,12 +46,15 @@ export type ContactChannel = {
   href: string | null;
 };
 
+/** The one public contact address. Anything that shows an email reads this. */
+export const SUPPORT_EMAIL = "support@kpve.com";
+
 export const CONTACT_INFO: ContactChannel[] = [
   {
     label: "Email",
-    value: "info@kappatos.com",
+    value: SUPPORT_EMAIL,
     icon: "/icons/mail.svg",
-    href: "mailto:info@kappatos.com",
+    href: `mailto:${SUPPORT_EMAIL}`,
   },
   {
     label: "Phone",

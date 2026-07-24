@@ -5,8 +5,10 @@ import type {
   ServiceCategory,
   Priority,
   ClientStatus,
+  ClientType,
   ClientServiceStatus,
   PaymentStatus,
+  InvoiceStatus,
   NoteKind,
   DocumentKind,
 } from "@/lib/db/schema";
@@ -209,6 +211,29 @@ export function ClientStatusBadge({ status }: { status: ClientStatus }) {
   return <ColorPill label={CLIENT_STATUS_LABELS[status]} colorVar={CLIENT_STATUS_VAR[status]} />;
 }
 
+/* ---- Client type (person or business) ---- */
+
+export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {
+  individual: "Individual",
+  company: "Company",
+};
+
+export const CLIENT_TYPES: ClientType[] = ["individual", "company"];
+
+/**
+ * Deliberately the neutral outlined chip rather than a colour pill: type is a
+ * fact about the record, not a state that needs watching, and it sits inches
+ * from a status badge that does. Two coloured pills side by side and neither
+ * one reads.
+ */
+export function ClientTypeBadge({ type }: { type: ClientType }) {
+  return (
+    <span className="inline-flex items-center whitespace-nowrap rounded-md border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-2 py-0.5 text-xs font-medium text-[var(--admin-fg-muted)]">
+      {CLIENT_TYPE_LABELS[type]}
+    </span>
+  );
+}
+
 /* ---- Billable service status ---- */
 
 const SERVICE_STATUS_VAR: Record<ClientServiceStatus, string> = {
@@ -259,6 +284,31 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
 
 export function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
   return <ColorPill label={PAYMENT_STATUS_LABELS[status]} colorVar={PAYMENT_STATUS_VAR[status]} />;
+}
+
+/* ---- Invoice status ----
+   Draft is a neutral outlined chip (it isn't a document yet); the rest reuse the
+   billing hues so "paid" reads the same green as an active service and a
+   succeeded payment. Void is muted — it's a record that no longer counts. */
+
+const INVOICE_STATUS_VAR: Record<InvoiceStatus, string> = {
+  draft: "--svc-draft-fg",
+  sent: "--svc-pending-fg",
+  paid: "--svc-active-fg",
+  void: "--svc-cancelled-fg",
+};
+
+export const INVOICE_STATUS_LABELS: Record<InvoiceStatus, string> = {
+  draft: "Draft",
+  sent: "Sent",
+  paid: "Paid",
+  void: "Void",
+};
+
+export const INVOICE_STATUSES: InvoiceStatus[] = ["draft", "sent", "paid", "void"];
+
+export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
+  return <ColorPill label={INVOICE_STATUS_LABELS[status]} colorVar={INVOICE_STATUS_VAR[status]} />;
 }
 
 /* ---- Timeline entries and documents ---- */

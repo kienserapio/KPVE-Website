@@ -10,6 +10,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 /* ---------------------------------------------------------------------------
@@ -113,6 +114,36 @@ export const documentKindEnum = pgEnum("document_kind", [
   "other",
 ]);
 
+/**
+ * Whether a client record is a person or a business. A real client is often
+ * both — one individual who owns several companies — so the two live in the
+ * same table and point at each other (see `clients.parent_client_id`) rather
+ * than in two tables that would need joining back together on every page.
+ */
+export const clientTypeEnum = pgEnum("client_type", ["individual", "company"]);
+
+/**
+ * Lifecycle of an issued document. `draft` is the only editable state: once an
+ * invoice is `sent` it is a record someone may have filed, so the correction is
+ * void-and-reissue, never an edit. `void` keeps the number burnt rather than
+ * reusing it, which is what makes a numbering sequence auditable.
+ */
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "draft",
+  "sent",
+  "paid",
+  "void",
+]);
+
+/**
+ * How tax was applied to an invoice AT ISSUE. `none` = not GST registered, and
+ * that is both the default and legal. `inclusive` = the stored amounts already
+ * contain the tax (the Australian norm); `exclusive` = tax is added on top.
+ * Stored on the invoice, not read from settings, so changing registration next
+ * year cannot rewrite what last year's invoice said.
+ */
+export const taxModeEnum = pgEnum("tax_mode", ["none", "inclusive", "exclusive"]);
+
 /* ---------------------------------------------------------------------------
    staff_users — everyone who can log into /admin.
    No public signup; seeded via scripts/create-staff-user.ts.
@@ -189,8 +220,49 @@ export const clients = pgTable(
     email: text("email").notNull(),
     phone: text("phone"),
 
+    /**
+     * Person or business. Existing rows default to `individual`, which is what
+     * every client entered before this column already was.
+     */
+    clientType: clientTypeEnum("client_type").notNull().default("individual"),
+
+    /**
+     * The human at a company — "Dimitrios Kappatos" on "Rare Gem Exchange Pty
+     * Ltd". Null on an individual, where `name` IS the person. On a company
+     * `name` is the trading name and this is who we actually talk to.
+     */
+    contactName: text("contact_name"),
+
+    /**
+     * The individual who owns this company. ON DELETE SET NULL, deliberately
+     * NOT cascade: deleting the individual must ORPHAN the companies, never
+     * delete them, because those companies are still being billed and their
+     * invoices are still on someone's books.
+     *
+     * One level only (a company cannot own a company) — enforced in the DAL
+     * rather than by a constraint, because a tree of arbitrary depth turns
+     * every roll-up into a recursive query for a case nobody has.
+     *
+     * Drizzle needs the explicit return type on a self-reference; without it
+     * the column's type is inferred circularly and TypeScript gives up.
+     */
+    parentClientId: uuid("parent_client_id").references((): AnyPgColumn => clients.id, {
+      onDelete: "set null",
+    }),
+
     category: serviceCategoryEnum("category").notNull().default("general"),
     status: clientStatusEnum("status").notNull().default("active"),
+
+    /* ---- Billing profile ----
+       Who this client is to the tax office, which is regularly not who they
+       are to us: the legal entity behind a trading name, and accounts@ rather
+       than the person we email. All nullable and all fall back to the contact
+       details above when blank, so a client who needs none of this needs to
+       fill in none of it. Copied onto an invoice at issue, never read live. */
+    billingName: text("billing_name"),
+    billingAbn: text("billing_abn"),
+    billingEmail: text("billing_email"),
+    billingAddress: text("billing_address"),
 
     /**
      * The old freeform "deal / value" field ("$2,000/mo retainer"). Superseded
@@ -224,6 +296,9 @@ export const clients = pgTable(
   (table) => [
     index("clients_created_at_idx").on(table.createdAt),
     index("clients_status_idx").on(table.status),
+    // "the companies this individual owns" is a card on every individual's page.
+    index("clients_parent_idx").on(table.parentClientId),
+    index("clients_type_idx").on(table.clientType),
   ],
 );
 
@@ -278,6 +353,14 @@ export const services = pgTable(
     defaultCurrency: text("default_currency").notNull().default("AUD"),
     defaultInterval: billingIntervalEnum("default_interval").notNull().default("monthly"),
 
+    /**
+     * What one unit of this service IS: "mailbox", "seat", "page", "domain".
+     * Null for things that aren't counted. It's the difference between a line
+     * reading "4 × $11.00/mo" and "4 mailboxes × $11.00/mo" — the second one
+     * tells you what four means without opening the client.
+     */
+    unitLabel: text("unit_label"),
+
     // Archive rather than delete — a retired service still has history attached.
     isActive: boolean("is_active").notNull().default(true),
 
@@ -316,8 +399,29 @@ export const clientServices = pgTable(
     // catalogue name, overridable — "Hosting (staging + prod)".
     label: text("label").notNull(),
 
-    // Integer minor units. Never a float: 0.1 + 0.2 is not 0.3, and money that
-    // doesn't add up is worse than no money column at all.
+    /**
+     * The price of ONE of the thing, and how many of them. "4 emails at $11"
+     * is one line with unit 1100 and quantity 4 — not four rows, and not a
+     * retyped 4400 that nobody can check.
+     */
+    unitAmountCents: integer("unit_amount_cents").notNull().default(0),
+    quantity: integer("quantity").notNull().default(1),
+
+    /**
+     * INVARIANT: `amount_cents` is the LINE TOTAL and is always written as
+     * `unit_amount_cents × quantity`.
+     *
+     * It is read by the MRR SQL in lib/dal/clients.ts, by summarize(), by the
+     * revenue snapshots, by the CSV export, by the Stripe `price_data` and by
+     * the upcoming-bills list. Keeping it the total is what stops any of them
+     * disagreeing about what a line is worth — none of them had to change when
+     * quantity arrived. The invariant is enforced in exactly one place, the
+     * DAL write path, because a stored derived value that drifts is worse than
+     * no column at all.
+     *
+     * Integer minor units. Never a float: 0.1 + 0.2 is not 0.3, and money that
+     * doesn't add up is worse than no money column at all.
+     */
     amountCents: integer("amount_cents").notNull().default(0),
     currency: text("currency").notNull().default("AUD"),
     interval: billingIntervalEnum("interval").notNull().default("monthly"),
@@ -363,6 +467,234 @@ export const clientServices = pgTable(
 );
 
 /* ---------------------------------------------------------------------------
+   client_service_items — the actual things provisioned under a billing line.
+
+   On an "Emails × 4" line these are the four mailbox addresses; on Hosting the
+   domains; on a build the deliverables. One row each.
+
+   Why a table and not a text blob on the line: they are added and removed one
+   at a time over the life of an account (a fifth mailbox in March), they are
+   snapshotted onto invoices individually, and "the fourth line of a textarea"
+   is not a thing you can delete safely.
+
+   Cascade-deletes with its line — an address with no service behind it is not
+   a record of anything. The invoice keeps its own flattened copy (see
+   invoice_lines.details), so deleting these never rewrites an issued document.
+--------------------------------------------------------------------------- */
+
+export const clientServiceItems = pgTable(
+  "client_service_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientServiceId: uuid("client_service_id")
+      .notNull()
+      .references(() => clientServices.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    // Staff order, not insertion order — the list is theirs to arrange.
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("client_service_items_line_idx").on(table.clientServiceId, table.position),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   org_settings — a single row: who KPVE is, on paper.
+
+   Why a table and not env vars: the same argument that made the service
+   catalogue a table. An ABN or a bank account changing must not be a deploy,
+   and the person who knows the right value is not the person with access to
+   the host's environment. Edited at /admin/settings.
+
+   Read live by the invoice builder and copied onto each invoice at issue, so
+   changing anything here affects the next invoice and never a past one.
+--------------------------------------------------------------------------- */
+
+export const orgSettings = pgTable("org_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  /* ---- Identity: what prints at the top of a tax invoice ---- */
+  legalName: text("legal_name").notNull().default("KPVE"),
+  tradingName: text("trading_name"),
+  abn: text("abn"),
+  address: text("address"),
+  email: text("email").notNull().default("support@kpve.com"),
+  phone: text("phone"),
+  website: text("website"),
+
+  /* ---- Tax ----
+     Off by default, which prints no tax line at all and is correct and legal
+     for a business that isn't registered. `tax_rate_bps` is basis points so
+     10% and 10.5% are both exact integers — a float rate would round money.
+     `prices_include_tax` defaults true (the Australian norm): stored amounts
+     do not change, the invoice just says the total includes GST. */
+  gstRegistered: boolean("gst_registered").notNull().default(false),
+  taxRateBps: integer("tax_rate_bps").notNull().default(1000),
+  pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+
+  /* ---- Invoicing ----
+     `invoice_prefix` + year + counter is the number ("INV-2026-0001").
+     The EFT block is for clients who won't use a card, which is most of the
+     ones who ask for an invoice in the first place. */
+  invoicePrefix: text("invoice_prefix").notNull().default("INV"),
+  paymentTermsDays: integer("payment_terms_days").notNull().default(14),
+  invoiceFooter: text("invoice_footer"),
+  bankName: text("bank_name"),
+  bsb: text("bsb"),
+  accountName: text("account_name"),
+  accountNumber: text("account_number"),
+
+  updatedBy: uuid("updated_by").references(() => staffUsers.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/* ---------------------------------------------------------------------------
+   invoices — the document a client's accountant can actually file.
+
+   A payment link takes money; this records what the money was for, in the form
+   the tax office recognises. The CRM could do the first without the second,
+   which is exactly the gap a real client walked into.
+
+   Everything about the parties and the tax rules is SNAPSHOTTED here at issue.
+   Same copy-at-conversion rule used for lead → client: an issued invoice is a
+   record of a moment. KPVE moving office next year must not rewrite last
+   year's invoices, and a document that changes after it is issued is a
+   compliance problem rather than a convenience.
+--------------------------------------------------------------------------- */
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+
+    /**
+     * "INV-2026-0001". This UNIQUE index IS the numbering guarantee — not the
+     * application logic around it. Allocation is max+1 with a bounded retry
+     * (the same pattern as uniqueSlug()), so two people pressing "Create
+     * invoice" at the same moment get two numbers rather than one number and
+     * a 500.
+     */
+    number: text("number").notNull(),
+
+    status: invoiceStatusEnum("status").notNull().default("draft"),
+
+    // Plain dates, not timestamps: an invoice is issued on a day, not at an
+    // instant, and nobody wants a due date that moves with a timezone.
+    issueDate: date("issue_date").notNull(),
+    dueDate: date("due_date"),
+    currency: text("currency").notNull().default("AUD"),
+
+    /* ---- Money, all integer minor units ----
+       Held on the invoice rather than recomputed from the lines, because the
+       lines can be deleted and the tax rate can change; the printed document
+       must keep saying what it said. */
+    subtotalCents: integer("subtotal_cents").notNull().default(0),
+    taxCents: integer("tax_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull().default(0),
+    amountPaidCents: integer("amount_paid_cents").notNull().default(0),
+
+    /** The tax rules in force AT ISSUE — see the taxModeEnum comment. */
+    taxRateBps: integer("tax_rate_bps").notNull().default(0),
+    taxMode: taxModeEnum("tax_mode").notNull().default("none"),
+
+    /* ---- Party snapshots: copy-at-issue, never a live lookup ---- */
+    sellerName: text("seller_name").notNull(),
+    sellerAbn: text("seller_abn"),
+    sellerAddress: text("seller_address"),
+    sellerEmail: text("seller_email"),
+    billToName: text("bill_to_name").notNull(),
+    billToAbn: text("bill_to_abn"),
+    billToEmail: text("bill_to_email"),
+    billToAddress: text("bill_to_address"),
+
+    /**
+     * 32 hex characters, the client's own link at /invoice/<token>. The link
+     * IS the credential — exactly how /pay/[ref] already works. There is no
+     * client login to hang this off, and a guessable id would be worse than
+     * an unguessable token.
+     */
+    publicToken: text("public_token").notNull(),
+
+    notes: text("notes"),
+    poNumber: text("po_number"),
+
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+
+    createdBy: uuid("created_by").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("invoices_number_idx").on(table.number),
+    uniqueIndex("invoices_public_token_idx").on(table.publicToken),
+    index("invoices_client_idx").on(table.clientId),
+    // The collections queue is "status = sent, due_date in the past".
+    index("invoices_status_idx").on(table.status),
+    index("invoices_issue_date_idx").on(table.issueDate),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   invoice_lines — one row of the printed document.
+
+   A frozen copy of a client_services line, not a view onto it. `label`,
+   `unit_amount_cents`, `quantity` and `amount_cents` are all written at issue
+   and never follow a later reprice.
+--------------------------------------------------------------------------- */
+
+export const invoiceLines = pgTable(
+  "invoice_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+
+    /**
+     * Soft link back to the billing line this came from, for "what have we
+     * invoiced for Hosting". ON DELETE SET NULL: deleting a billing line must
+     * not gut an issued invoice.
+     */
+    clientServiceId: uuid("client_service_id").references(() => clientServices.id, {
+      onDelete: "set null",
+    }),
+
+    label: text("label").notNull(),
+    description: text("description"),
+
+    unitAmountCents: integer("unit_amount_cents").notNull().default(0),
+    quantity: integer("quantity").notNull().default(1),
+    amountCents: integer("amount_cents").notNull().default(0),
+
+    /**
+     * The provisioned items (client_service_items), flattened to newline-
+     * separated text at issue time. A snapshot, not a join: removing a mailbox
+     * in March must not change what the February invoice said was supplied.
+     */
+    details: text("details"),
+
+    // "1 Aug – 31 Aug" — what makes a recurring invoice make sense to whoever
+    // files it six months later.
+    periodStart: date("period_start"),
+    periodEnd: date("period_end"),
+
+    position: integer("position").notNull().default(0),
+  },
+  (table) => [index("invoice_lines_invoice_idx").on(table.invoiceId, table.position)],
+);
+
+/* ---------------------------------------------------------------------------
    payments — every attempt to take money, whoever took it.
 
    Rows are written by the payment webhook (or the simulator, which goes through
@@ -383,6 +715,16 @@ export const payments = pgTable(
       .notNull()
       .references(() => clients.id, { onDelete: "cascade" }),
     clientServiceId: uuid("client_service_id").references(() => clientServices.id, {
+      onDelete: "set null",
+    }),
+
+    /**
+     * The document this money settles, when there is one. Nullable — a payment
+     * link taken against a service line has no invoice behind it, and that is
+     * still a real payment. ON DELETE SET NULL for the same reason as the line
+     * above: deleting a draft invoice must not erase money that was collected.
+     */
+    invoiceId: uuid("invoice_id").references(() => invoices.id, {
       onDelete: "set null",
     }),
 
@@ -407,6 +749,8 @@ export const payments = pgTable(
     index("payments_client_idx").on(table.clientId),
     index("payments_status_idx").on(table.status),
     index("payments_paid_at_idx").on(table.paidAt),
+    // "what has been paid against this invoice" — read on every invoice screen.
+    index("payments_invoice_idx").on(table.invoiceId),
     uniqueIndex("payments_provider_ref_idx").on(table.providerRef),
   ],
 );
@@ -559,6 +903,7 @@ export type Priority = (typeof priorityEnum.enumValues)[number];
 export type Client = typeof clients.$inferSelect;
 export type NewClient = typeof clients.$inferInsert;
 export type ClientStatus = (typeof clientStatusEnum.enumValues)[number];
+export type ClientType = (typeof clientTypeEnum.enumValues)[number];
 export type ClientTask = typeof clientTasks.$inferSelect;
 export type NewClientTask = typeof clientTasks.$inferInsert;
 export type Service = typeof services.$inferSelect;
@@ -567,9 +912,25 @@ export type ClientService = typeof clientServices.$inferSelect;
 export type NewClientService = typeof clientServices.$inferInsert;
 export type BillingInterval = (typeof billingIntervalEnum.enumValues)[number];
 export type ClientServiceStatus = (typeof clientServiceStatusEnum.enumValues)[number];
+/**
+ * Named ...Row, not ClientServiceItem: `ClientServiceItem` is already an
+ * exported type in lib/dal/services.ts (a billing line joined with its
+ * catalogue entry, which is what the UI consumes). Two different shapes with
+ * one name in two modules is an import collision waiting to be debugged, so
+ * the raw table row carries the suffix.
+ */
+export type ClientServiceItemRow = typeof clientServiceItems.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type NewPayment = typeof payments.$inferInsert;
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
+export type OrgSettings = typeof orgSettings.$inferSelect;
+export type NewOrgSettings = typeof orgSettings.$inferInsert;
+export type Invoice = typeof invoices.$inferSelect;
+export type NewInvoice = typeof invoices.$inferInsert;
+export type InvoiceStatus = (typeof invoiceStatusEnum.enumValues)[number];
+export type InvoiceLine = typeof invoiceLines.$inferSelect;
+export type NewInvoiceLine = typeof invoiceLines.$inferInsert;
+export type TaxMode = (typeof taxModeEnum.enumValues)[number];
 export type ClientNote = typeof clientNotes.$inferSelect;
 export type NoteKind = (typeof noteKindEnum.enumValues)[number];
 export type ClientDocument = typeof clientDocuments.$inferSelect;

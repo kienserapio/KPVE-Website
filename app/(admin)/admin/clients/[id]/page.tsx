@@ -2,15 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { verifySession } from "@/lib/dal/session";
-import { getClient } from "@/lib/dal/clients";
+import { getClient, listIndividualClients } from "@/lib/dal/clients";
 import { listServices } from "@/lib/dal/services";
 import { listActiveStaff } from "@/lib/dal/staff";
+import { listClientInvoices, invoicedServiceIds } from "@/lib/dal/invoices";
 import { formatDate, formatDateTime } from "@/lib/utils";
-import { formatMoney, primaryTotal } from "@/lib/billing";
+import { formatMoney, primaryTotal, summarize } from "@/lib/billing";
 import {
   Card,
   CategoryBadge,
   ClientStatusBadge,
+  ClientTypeBadge,
   Money,
   PaymentStatusBadge,
 } from "@/components/admin/ui";
@@ -22,6 +24,7 @@ import {
   ClientServices,
   RevenueSummaryStrip,
 } from "@/components/admin/ClientServices";
+import { ClientInvoices } from "@/components/admin/ClientInvoices";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -36,16 +39,43 @@ export default async function ClientDetailPage({
   const { id } = await params;
   if (!UUID_RE.test(id)) notFound();
 
-  const [client, staffOptions, catalogue] = await Promise.all([
-    getClient(id),
-    listActiveStaff(),
-    listServices(),
-  ]);
+  const [client, staffOptions, catalogue, parentOptions, invoices, invoicedIds] =
+    await Promise.all([
+      getClient(id),
+      listActiveStaff(),
+      listServices(),
+      // This record excluded: nothing may own itself.
+      listIndividualClients(id),
+      // The invoices raised against this client, and which of its billing lines
+      // are already on one — the latter drives the "already invoiced" tag in the
+      // builder (a Set, flattened to an array below for the client component).
+      listClientInvoices(id),
+      invoicedServiceIds(id),
+    ]);
   if (!client) notFound();
 
   const openTasks = client.tasks.filter((t) => !t.done).length;
   const activeServices = client.services.filter((s) => s.status === "active");
   const headline = primaryTotal(client.revenue);
+
+  const isCompany = client.clientType === "company";
+
+  // The businesses roll-up goes through summarize() rather than a local sum so
+  // a group billed in two currencies is two numbers here as well as everywhere
+  // else. Each business's MRR is already monthly, hence interval "monthly".
+  const groupRevenue = primaryTotal(
+    summarize(
+      client.businesses.map((b) => ({
+        amountCents: b.mrrCents,
+        currency: b.mrrCurrency,
+        interval: "monthly" as const,
+      })),
+    ),
+  );
+
+  const hasBillingProfile = Boolean(
+    client.billingName || client.billingAbn || client.billingEmail || client.billingAddress,
+  );
 
   // Cash actually taken from this client. Only succeeded payments in the
   // headline currency — money in two currencies is two numbers, not one.
@@ -70,10 +100,19 @@ export default async function ClientDetailPage({
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
           <ClientStatusBadge status={client.status} />
+          <ClientTypeBadge type={client.clientType} />
           <CategoryBadge category={client.category} />
         </div>
         <p className="mt-1 text-sm text-[var(--admin-fg-muted)]">
-          {client.company ? `${client.company} · ` : ""}
+          {/* On a company the name above IS the business, so the sub-line is
+              the person we deal with; the free-text company field is unused. */}
+          {isCompany
+            ? client.contactName
+              ? `${client.contactName} · `
+              : ""
+            : client.company
+              ? `${client.company} · `
+              : ""}
           Client since {formatDateTime(client.createdAt)}
         </p>
       </div>
@@ -109,6 +148,62 @@ export default async function ClientDetailPage({
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="flex flex-col gap-6 lg:col-span-2">
+          {/* "This client has multiple businesses that we manage" — one card,
+              all of them, with what each is worth. Only an individual can own
+              anything, so a company never renders this. */}
+          {client.businesses.length > 0 && (
+            <Card className="p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                    Businesses
+                  </h2>
+                  <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                    Companies owned by this client. Each is billed in its own name.
+                  </p>
+                </div>
+                <span className="shrink-0 text-xs text-[var(--admin-fg-subtle)]">
+                  {client.businesses.length}{" "}
+                  {client.businesses.length === 1 ? "business" : "businesses"}
+                  {groupRevenue.mrrCents > 0 && (
+                    <>
+                      {" · "}
+                      {formatMoney(groupRevenue.mrrCents, groupRevenue.currency)}/mo
+                      combined
+                    </>
+                  )}
+                </span>
+              </div>
+
+              <ul className="mt-4 flex flex-col divide-y divide-[var(--admin-border)]">
+                {client.businesses.map((business) => (
+                  <li
+                    key={business.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2.5 first:pt-0 last:pb-0"
+                  >
+                    <ClientStatusBadge status={business.status} />
+                    <Link
+                      href={`/admin/clients/${business.id}`}
+                      className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--admin-fg)] transition hover:text-[var(--admin-accent)] hover:underline"
+                    >
+                      {business.name}
+                    </Link>
+                    {business.contactName && (
+                      <span className="truncate text-xs text-[var(--admin-fg-subtle)]">
+                        {business.contactName}
+                      </span>
+                    )}
+                    <Money className="text-sm font-medium" muted={business.mrrCents === 0}>
+                      {business.mrrCents > 0
+                        ? `${formatMoney(business.mrrCents, business.mrrCurrency)}/mo`
+                        : "—"}
+                    </Money>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           <Card className="p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -176,6 +271,47 @@ export default async function ClientDetailPage({
             </Card>
           )}
 
+          {/* Invoices sit with the money — after Payments, above the
+              operational Tasks/Timeline. Always shown: it carries its own empty
+              state and the "New invoice" builder. */}
+          <Card className="p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  Invoices
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                  Tax invoices raised for this client. A draft is editable; once
+                  sent it&apos;s void-and-reissue.
+                </p>
+              </div>
+              <Link
+                href="/admin/invoices"
+                className="shrink-0 text-xs font-medium text-[var(--admin-accent)] hover:underline"
+              >
+                All invoices →
+              </Link>
+            </div>
+            <div className="mt-5">
+              <ClientInvoices
+                clientId={client.id}
+                clientName={client.name}
+                invoices={invoices}
+                services={client.services.map((s) => ({
+                  id: s.id,
+                  label: s.label,
+                  unitAmountCents: s.unitAmountCents,
+                  quantity: s.quantity,
+                  amountCents: s.amountCents,
+                  currency: s.currency,
+                  interval: s.interval,
+                  status: s.status,
+                }))}
+                alreadyInvoiced={Array.from(invoicedIds)}
+              />
+            </div>
+          </Card>
+
           <Card className="p-6">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
@@ -210,7 +346,11 @@ export default async function ClientDetailPage({
             </div>
           </Card>
 
-          <ClientEditor client={client} staffOptions={staffOptions} />
+          <ClientEditor
+            client={client}
+            staffOptions={staffOptions}
+            parentOptions={parentOptions}
+          />
         </div>
 
         <div className="flex flex-col gap-6">
@@ -253,6 +393,19 @@ export default async function ClientDetailPage({
                 )}
               </dd>
             </div>
+            {client.parentClientId && client.parentName && (
+              <div>
+                <dt className="text-xs text-[var(--admin-fg-subtle)]">Part of</dt>
+                <dd className="mt-0.5">
+                  <Link
+                    href={`/admin/clients/${client.parentClientId}`}
+                    className="text-[var(--admin-accent)] hover:underline"
+                  >
+                    {client.parentName} →
+                  </Link>
+                </dd>
+              </div>
+            )}
             {client.sourceLeadId && (
               <div>
                 <dt className="text-xs text-[var(--admin-fg-subtle)]">Origin</dt>
@@ -281,6 +434,69 @@ export default async function ClientDetailPage({
             Reply by email
           </a>
         </Card>
+
+        {/* Shown when there is something to show, and on every company even
+            when empty — a company with no ABN is a company whose invoices
+            aren't tax invoices, and that is worth saying before one is sent. */}
+        {(hasBillingProfile || isCompany) && (
+          <Card className="h-fit p-6">
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+              Billing details
+            </h2>
+            <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+              What prints on an invoice. Blank falls back to the contact details.
+            </p>
+
+            {hasBillingProfile ? (
+              <dl className="mt-4 flex flex-col gap-4 text-sm">
+                {client.billingName && (
+                  <div>
+                    <dt className="text-xs text-[var(--admin-fg-subtle)]">Legal name</dt>
+                    <dd className="mt-0.5">{client.billingName}</dd>
+                  </div>
+                )}
+                {client.billingAbn && (
+                  <div>
+                    <dt className="text-xs text-[var(--admin-fg-subtle)]">ABN</dt>
+                    <dd className="mt-0.5 tabular-nums">{client.billingAbn}</dd>
+                  </div>
+                )}
+                {client.billingEmail && (
+                  <div>
+                    <dt className="text-xs text-[var(--admin-fg-subtle)]">Billing email</dt>
+                    <dd className="mt-0.5">
+                      <a
+                        href={`mailto:${client.billingEmail}`}
+                        className="break-all text-[var(--admin-accent)] hover:underline"
+                      >
+                        {client.billingEmail}
+                      </a>
+                    </dd>
+                  </div>
+                )}
+                {client.billingAddress && (
+                  <div>
+                    <dt className="text-xs text-[var(--admin-fg-subtle)]">Address</dt>
+                    <dd className="mt-0.5 whitespace-pre-line text-[var(--admin-fg-muted)]">
+                      {client.billingAddress}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            ) : (
+              <p className="mt-4 text-sm text-[var(--admin-fg-muted)]">
+                Nothing set — invoices will use the contact details above.
+              </p>
+            )}
+
+            {isCompany && !client.billingAbn && (
+              <p className="mt-4 border-t border-[var(--admin-border)] pt-4 text-xs text-[var(--admin-fg-muted)]">
+                No ABN on file. An invoice without one isn&apos;t a tax invoice,
+                so the client can&apos;t claim it as an expense.
+              </p>
+            )}
+          </Card>
+        )}
 
         <Card className="h-fit p-6">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">

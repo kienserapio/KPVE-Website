@@ -9,6 +9,7 @@ import {
   Card,
   CategoryBadge,
   ClientStatusBadge,
+  ClientTypeBadge,
   EmptyState,
   Money,
   StatCard,
@@ -31,6 +32,7 @@ export default async function ClientsPage({
   const parsed = clientFiltersSchema.safeParse({
     status: params.status,
     category: params.category,
+    type: params.type,
     q: params.q,
     page: params.page ?? 1,
   });
@@ -41,12 +43,13 @@ export default async function ClientsPage({
     listClients(filters),
   ]);
 
-  const hasFilters = Boolean(filters.status || filters.category || filters.q);
+  const hasFilters = Boolean(filters.status || filters.category || filters.type || filters.q);
   const revenue = primaryTotal(stats.revenue);
 
   const exportQuery = new URLSearchParams();
   if (filters.status) exportQuery.set("status", filters.status);
   if (filters.category) exportQuery.set("category", filters.category);
+  if (filters.type) exportQuery.set("type", filters.type);
   if (filters.q) exportQuery.set("q", filters.q);
 
   return (
@@ -90,6 +93,7 @@ export default async function ClientsPage({
           <ClientFilters
             currentStatus={filters.status}
             currentCategory={filters.category}
+            currentType={filters.type}
             currentQuery={filters.q ?? ""}
             counts={stats.byStatus}
             totalCount={stats.total}
@@ -135,22 +139,38 @@ export default async function ClientsPage({
                 </tr>
               </thead>
               <tbody>
-                {items.map((client) => (
+                {items.map((client) => {
+                  // On a company the human is `contactName`; on an individual
+                  // it's the optional free-text company. Either way it's the
+                  // same second line — a column per field would squeeze the
+                  // money off the right of the table.
+                  const secondary =
+                    client.clientType === "company" ? client.contactName : client.company;
+
+                  return (
                   <tr
                     key={client.id}
                     className="group transition hover:bg-[var(--admin-surface-2)]"
                   >
                     <Td>
-                      <Link
-                        href={`/admin/clients/${client.id}`}
-                        className="font-medium hover:text-[var(--admin-accent)] hover:underline"
-                      >
-                        {client.name}
-                      </Link>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={`/admin/clients/${client.id}`}
+                          className="font-medium hover:text-[var(--admin-accent)] hover:underline"
+                        >
+                          {client.name}
+                        </Link>
+                        <ClientTypeBadge type={client.clientType} />
+                      </div>
                       <p className="mt-0.5 truncate text-xs text-[var(--admin-fg-subtle)]">
-                        {client.company ? `${client.company} · ` : ""}
+                        {secondary ? `${secondary} · ` : ""}
                         {client.email}
                       </p>
+                      {client.parentName && (
+                        <p className="mt-0.5 truncate text-xs text-[var(--admin-fg-subtle)]">
+                          Part of {client.parentName}
+                        </p>
+                      )}
                     </Td>
                     <Td>
                       <CategoryBadge category={client.category} />
@@ -180,7 +200,8 @@ export default async function ClientsPage({
                       {formatRelative(client.updatedAt)}
                     </Td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </Table>
 
@@ -218,7 +239,7 @@ function PageLink({
   label,
 }: {
   page: number;
-  filters: { status?: string; category?: string; q?: string };
+  filters: { status?: string; category?: string; type?: string; q?: string };
   disabled: boolean;
   label: string;
 }) {
@@ -233,6 +254,7 @@ function PageLink({
   const query = new URLSearchParams();
   if (filters.status) query.set("status", filters.status);
   if (filters.category) query.set("category", filters.category);
+  if (filters.type) query.set("type", filters.type);
   if (filters.q) query.set("q", filters.q);
   query.set("page", String(page));
 

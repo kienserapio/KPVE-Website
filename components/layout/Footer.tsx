@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Icon } from "@/components/ui/Icon";
-import { FOOTER_LINKS, SOCIAL_LINKS } from "@/lib/data";
+import { FOOTER_LINKS, SOCIAL_LINKS, SUPPORT_EMAIL } from "@/lib/data";
 
 export function Footer() {
   return (
@@ -28,10 +28,10 @@ export function Footer() {
               products people love.
             </p>
             <a
-              href="mailto:info@kpve.com"
+              href={`mailto:${SUPPORT_EMAIL}`}
               className="group inline-flex items-center gap-2 text-sm font-medium text-white transition-colors hover:text-gold"
             >
-              info@kpve.com
+              {SUPPORT_EMAIL}
               <Icon
                 src="/icons/mail.svg"
                 tone="gold"

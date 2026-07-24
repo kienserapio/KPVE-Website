@@ -33,7 +33,21 @@ function mapError(error: unknown): string {
   if (error instanceof Error && error.message === "NOT_FOUND") {
     return "That record no longer exists.";
   }
+  if (error instanceof Error && error.message === "INVALID_PARENT") {
+    return "A business can only be owned by an individual client, and only one level deep.";
+  }
   return "Something went wrong. Please try again.";
+}
+
+/**
+ * The client schemas turn a cleared field into `undefined`, and the DAL reads
+ * `undefined` as "leave this column alone" — so on its own, emptying a field in
+ * the editor would silently keep the old value. The form posts every field it
+ * renders, so "posted, and blank" is an instruction to clear it: null.
+ */
+function clearedToNull(formData: FormData, key: string): null | undefined {
+  const raw = formData.get(key);
+  return typeof raw === "string" && raw.trim() === "" ? null : undefined;
 }
 
 /* ---------------------------------------------------------------------------
@@ -45,12 +59,19 @@ export async function createClientAction(
   formData: FormData,
 ): Promise<ClientActionState> {
   const parsed = createClientSchema.safeParse({
+    clientType: formData.get("clientType") || undefined,
     name: formData.get("name"),
+    contactName: formData.get("contactName") ?? undefined,
     company: formData.get("company") ?? undefined,
     email: formData.get("email"),
     phone: formData.get("phone") ?? undefined,
+    parentClientId: formData.get("parentClientId") ?? undefined,
     assignedStaffId: formData.get("assignedStaffId") ?? undefined,
     notes: formData.get("notes") ?? undefined,
+    billingName: formData.get("billingName") ?? undefined,
+    billingAbn: formData.get("billingAbn") ?? undefined,
+    billingEmail: formData.get("billingEmail") ?? undefined,
+    billingAddress: formData.get("billingAddress") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -76,21 +97,39 @@ export async function updateClientAction(
 ): Promise<ClientActionState> {
   const parsed = updateClientSchema.safeParse({
     clientId: formData.get("clientId"),
+    clientType: formData.get("clientType") || undefined,
     name: formData.get("name") || undefined,
+    contactName: formData.get("contactName") ?? undefined,
     company: formData.get("company") ?? undefined,
     email: formData.get("email") || undefined,
     phone: formData.get("phone") ?? undefined,
+    parentClientId: formData.get("parentClientId") ?? undefined,
     category: formData.get("category") || undefined,
     status: formData.get("status") || undefined,
     assignedStaffId: formData.get("assignedStaffId") ?? undefined,
     notes: formData.get("notes") ?? undefined,
+    billingName: formData.get("billingName") ?? undefined,
+    billingAbn: formData.get("billingAbn") ?? undefined,
+    billingEmail: formData.get("billingEmail") ?? undefined,
+    billingAddress: formData.get("billingAddress") ?? undefined,
   });
 
   if (!parsed.success) {
     return initialFail(parsed.error.issues[0]?.message ?? "Those changes couldn't be saved.");
   }
 
-  const { clientId, ...patch } = parsed.data;
+  const { clientId, ...fields } = parsed.data;
+
+  // Fields that can be emptied on purpose: a contact person who left, an ABN
+  // typed into the wrong client. Everything else keeps today's behaviour.
+  const patch = {
+    ...fields,
+    contactName: fields.contactName ?? clearedToNull(formData, "contactName"),
+    billingName: fields.billingName ?? clearedToNull(formData, "billingName"),
+    billingAbn: fields.billingAbn ?? clearedToNull(formData, "billingAbn"),
+    billingEmail: fields.billingEmail ?? clearedToNull(formData, "billingEmail"),
+    billingAddress: fields.billingAddress ?? clearedToNull(formData, "billingAddress"),
+  };
 
   try {
     await requireSession();

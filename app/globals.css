@@ -314,3 +314,74 @@ body:has([data-theme="light"]) {
     scroll-behavior: auto;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Print — an invoice is a document, not a dashboard.
+
+   The admin invoice page and the client's public copy both wrap the printable
+   sheet in `.invoice-print`. When the page is printed (or "saved as PDF"), we
+   hide everything, reveal only that sheet, and lift it to the paper's top-left
+   so the hidden-but-still-laid-out shell doesn't push it down. The result is
+   the same file whether staff or client produces it — no PDF library involved.
+--------------------------------------------------------------------------- */
+@media print {
+  /* Hide the whole page, then reveal only the invoice document and its subtree.
+     (A visible child of a hidden ancestor still shows — that's the mechanism.) */
+  body * {
+    visibility: hidden;
+  }
+  .invoice-print,
+  .invoice-print * {
+    visibility: visible;
+  }
+
+  /* Anything explicitly page chrome — action bars, pay/print buttons — is gone
+     from the printout, not merely hidden. */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Ink on paper, regardless of the on-screen theme. Re-point the admin tokens
+     the document is built from to a light palette so every `var(--admin-*)` and
+     status colour resolves legibly on white — this is what keeps a dark-theme
+     admin invoice from printing white-on-white. */
+  .invoice-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+
+    --admin-bg: #ffffff;
+    --admin-surface: #ffffff;
+    --admin-surface-2: #f5f5f4;
+    --admin-raised: #ffffff;
+    --admin-border: #d6d3cd;
+    --admin-border-strong: #b7b4ac;
+    --admin-fg: #16150f;
+    --admin-fg-muted: #44423a;
+    --admin-fg-subtle: #6b685f;
+    --admin-accent: #92620a;
+    --admin-accent-fg: #ffffff;
+    --admin-input: #ffffff;
+    --admin-shadow: none;
+
+    /* Status hues darkened to hold contrast on white — matches the light theme. */
+    --svc-draft-fg: #57534e;
+    --svc-pending-fg: #92620a;
+    --svc-active-fg: #047857;
+    --svc-cancelled-fg: #57534e;
+
+    background: #ffffff;
+    color: var(--admin-fg);
+  }
+
+  @page {
+    margin: 16mm;
+  }
+}

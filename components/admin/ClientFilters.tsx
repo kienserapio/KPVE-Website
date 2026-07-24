@@ -5,23 +5,30 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import type { ClientStatus, ServiceCategory } from "@/lib/db/schema";
+import type { ClientStatus, ClientType, ServiceCategory } from "@/lib/db/schema";
 import {
   CLIENT_STATUS_LABELS,
   CLIENT_STATUSES,
+  CLIENT_TYPE_LABELS,
+  CLIENT_TYPES,
   CATEGORY_LABELS,
   SERVICE_CATEGORIES,
 } from "./ui";
 
+const filterSelectClass =
+  "rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2 text-sm font-normal text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25";
+
 export function ClientFilters({
   currentStatus,
   currentCategory,
+  currentType,
   currentQuery,
   counts,
   totalCount,
 }: {
   currentStatus?: ClientStatus;
   currentCategory?: ServiceCategory;
+  currentType?: ClientType;
   currentQuery: string;
   counts: Record<ClientStatus, number>;
   totalCount: number;
@@ -50,15 +57,17 @@ export function ClientFilters({
     const params = new URLSearchParams();
     if (status) params.set("status", status);
     if (currentCategory) params.set("category", currentCategory);
+    if (currentType) params.set("type", currentType);
     if (currentQuery) params.set("q", currentQuery);
     const qs = params.toString();
     return qs ? `/admin/clients?${qs}` : "/admin/clients";
   }
 
-  function onCategoryChange(value: string) {
+  /** Every select filter behaves the same way: set or clear, then reset paging. */
+  function onSelectChange(key: "category" | "type", value: string) {
     const params = new URLSearchParams(searchParams.toString());
-    if (value) params.set("category", value);
-    else params.delete("category");
+    if (value) params.set(key, value);
+    else params.delete(key);
     params.delete("page");
     router.replace(`/admin/clients?${params.toString()}`);
   }
@@ -82,22 +91,41 @@ export function ClientFilters({
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <label className="flex items-center gap-2 text-xs font-medium text-[var(--admin-fg-subtle)]">
-          <span className="uppercase tracking-wider">Category</span>
-          <select
-            value={currentCategory ?? ""}
-            onChange={(e) => onCategoryChange(e.target.value)}
-            aria-label="Filter by category"
-            className="rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2 text-sm font-normal text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25"
-          >
-            <option value="">All categories</option>
-            {SERVICE_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {CATEGORY_LABELS[c]}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-[var(--admin-fg-subtle)]">
+            <span className="uppercase tracking-wider">Category</span>
+            <select
+              value={currentCategory ?? ""}
+              onChange={(e) => onSelectChange("category", e.target.value)}
+              aria-label="Filter by category"
+              className={filterSelectClass}
+            >
+              <option value="">All categories</option>
+              {SERVICE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {CATEGORY_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 text-xs font-medium text-[var(--admin-fg-subtle)]">
+            <span className="uppercase tracking-wider">Type</span>
+            <select
+              value={currentType ?? ""}
+              onChange={(e) => onSelectChange("type", e.target.value)}
+              aria-label="Filter by client type"
+              className={filterSelectClass}
+            >
+              <option value="">People and businesses</option>
+              {CLIENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {CLIENT_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
 
         <div className="relative sm:w-72">
           <input

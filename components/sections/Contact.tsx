@@ -7,10 +7,7 @@ import { Eyebrow } from "@/components/ui/Eyebrow";
 import { Reveal } from "@/components/ui/Reveal";
 import { Icon } from "@/components/ui/Icon";
 import { Field } from "@/components/ui/Field";
-import { CONTACT_INFO } from "@/lib/data";
-
-const SUPPORT_EMAIL =
-  CONTACT_INFO.find((c) => c.label === "Email")?.value ?? "info@kappatos.com";
+import { SUPPORT_EMAIL } from "@/lib/data";
 
 /** Creative visual: a radar "signal" broadcasting from the KPVE mark. */
 function SignalPanel() {

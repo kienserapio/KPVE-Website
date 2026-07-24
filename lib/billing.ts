@@ -193,6 +193,159 @@ export function centsToInput(cents: number): string {
 }
 
 /* ---------------------------------------------------------------------------
+   Quantity
+
+   "4 emails at $11" is one line with a unit price and a count, not a retyped
+   $44. The stored `amount_cents` stays the LINE TOTAL (see the invariant on
+   client_services.amount_cents) — this function is the only thing that should
+   ever compute it, so the two numbers and the total cannot drift apart.
+--------------------------------------------------------------------------- */
+
+/**
+ * A sane upper bound. Nobody has 10,000 mailboxes, and without a cap a typo in
+ * a quantity box multiplies into an amount that overflows the integer column
+ * and fails at the database rather than at the form.
+ */
+export const MAX_QUANTITY = 9999;
+
+/** Line total = unit × qty, clamped so a bad input can't produce a bad row. */
+export function lineTotalCents(unitAmountCents: number, quantity: number): number {
+  // Coerce first: a quantity arriving as "" or NaN means one of the thing,
+  // never zero — a line worth nothing is not what anyone typed.
+  const qty = Number.isFinite(quantity) ? Math.trunc(quantity) : 1;
+  const safeQty = Math.min(Math.max(qty, 1), MAX_QUANTITY);
+  const unit = Number.isFinite(unitAmountCents) ? Math.max(Math.trunc(unitAmountCents), 0) : 0;
+
+  return Math.min(unit * safeQty, MAX_AMOUNT_CENTS);
+}
+
+/* ---------------------------------------------------------------------------
+   Tax (GST)
+
+   Three states, and which one applies is a property of the ORG, snapshotted
+   onto each invoice at issue so changing registration never rewrites history.
+
+   Rounding happens ONCE, at the total — never per line. Rounding each line and
+   adding them up produces an invoice whose printed parts don't sum to its
+   printed whole, which is the single most common way a tax invoice gets
+   bounced by an accountant.
+--------------------------------------------------------------------------- */
+
+export type TaxSettings = {
+  gstRegistered: boolean;
+  /** Basis points: 1000 = 10%, 1050 = 10.5%. Integers, so no rate ever rounds. */
+  taxRateBps: number;
+  pricesIncludeTax: boolean;
+};
+
+export type TaxBreakdown = {
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  taxRateBps: number;
+  mode: "none" | "inclusive" | "exclusive";
+};
+
+/**
+ * Turn a set of line totals into the three numbers an invoice prints.
+ *
+ *  - NOT registered → mode "none": no tax line at all, total === subtotal.
+ *    This is the default, and it is correct and legal for a business that
+ *    isn't registered for GST.
+ *  - Registered, prices INCLUDE tax → mode "inclusive" (the Australian norm).
+ *    Stored amounts DO NOT CHANGE: $11 stays $11. The tax is extracted from
+ *    the total — tax = total × rate / (10000 + rate) — and the invoice prints
+ *    "Total includes GST of $1.00". Nothing in client_services, MRR, the
+ *    payment links or the ledger moves, which is why it's the default.
+ *  - Registered, prices EXCLUDE tax → mode "exclusive": tax is added on top,
+ *    so the client pays more than the stored amount. Offered for completeness;
+ *    switching it after invoices exist changes what clients pay.
+ */
+export function computeTax(
+  lineTotalsCents: number[] | number,
+  settings: TaxSettings,
+): TaxBreakdown {
+  const lines = Array.isArray(lineTotalsCents) ? lineTotalsCents : [lineTotalsCents];
+  // Sum of the stored line totals. Whether this is the subtotal or the total
+  // depends entirely on the mode below — that's the whole inclusive/exclusive
+  // distinction.
+  const sum = lines.reduce((acc, cents) => acc + (Number.isFinite(cents) ? cents : 0), 0);
+
+  const rate = Number.isFinite(settings.taxRateBps)
+    ? Math.max(Math.trunc(settings.taxRateBps), 0)
+    : 0;
+
+  // Not registered, or a zero rate: there is nothing to print and nothing to
+  // extract. Claiming a $0 GST line on an invoice would be worse than silence.
+  if (!settings.gstRegistered || rate === 0) {
+    return {
+      subtotalCents: sum,
+      taxCents: 0,
+      totalCents: sum,
+      taxRateBps: 0,
+      mode: "none",
+    };
+  }
+
+  if (settings.pricesIncludeTax) {
+    const taxCents = Math.round((sum * rate) / (10000 + rate));
+    return {
+      subtotalCents: sum - taxCents,
+      taxCents,
+      totalCents: sum,
+      taxRateBps: rate,
+      mode: "inclusive",
+    };
+  }
+
+  const taxCents = Math.round((sum * rate) / 10000);
+  return {
+    subtotalCents: sum,
+    taxCents,
+    totalCents: sum + taxCents,
+    taxRateBps: rate,
+    mode: "exclusive",
+  };
+}
+
+/** 1000 → "10%", 1050 → "10.5%". No trailing ".0" — nobody writes "10.0% GST". */
+export function formatTaxRate(bps: number): string {
+  const percent = (Number.isFinite(bps) ? bps : 0) / 100;
+  return `${Number(percent.toFixed(2))}%`;
+}
+
+/* ---------------------------------------------------------------------------
+   Quantity formatting
+--------------------------------------------------------------------------- */
+
+/**
+ * How a quantity line reads inline: "4 × $11.00/mo", or "4 mailboxes ×
+ * $11.00/mo" when the catalogue entry says what a unit is. A quantity of one
+ * returns just the rate — "1 × $30/mo" is noise on every single-unit line,
+ * which is most of them.
+ */
+export function formatQuantityLine(
+  unitCents: number,
+  quantity: number,
+  currency: string,
+  interval: BillingInterval,
+  unitLabel?: string | null,
+): string {
+  const rate = formatRate(unitCents, currency, interval);
+  const qty = Number.isFinite(quantity) ? Math.trunc(quantity) : 1;
+  if (qty <= 1) return rate;
+
+  const label = unitLabel?.trim();
+  if (!label) return `${qty} × ${rate}`;
+
+  // Naive plural, deliberately: "mailbox" → "mailboxs" is wrong but the field
+  // is staff-typed and staff can type "mailboxes". A pluralisation library for
+  // one label is not a dependency worth carrying.
+  const plural = qty !== 1 && !label.endsWith("s") ? `${label}s` : label;
+  return `${qty} ${plural} × ${rate}`;
+}
+
+/* ---------------------------------------------------------------------------
    Dates
 --------------------------------------------------------------------------- */
 

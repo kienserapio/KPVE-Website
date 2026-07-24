@@ -14,9 +14,9 @@ numbers add themselves up.**
 Go to `/login`. There's no signup — accounts are created by a developer running
 `npm run staff:create`. Ask for one.
 
-Once in, the sidebar has six places:
+Once in, the sidebar has eight places:
 
-**Overview · Enquiries · Clients · Services · Revenue · Activity**
+**Overview · Enquiries · Clients · Services · Revenue · Invoices · Activity · Settings**
 
 Top-right toggles light/dark. It sticks.
 
@@ -26,12 +26,35 @@ Top-right toggles light/dark. It sticks.
 
 Do this before anything else. Ten minutes, and you never repeat it.
 
+### 0. Fill in your business details — `/admin/settings`
+
+This is who **you** are on an invoice. Until it's filled in, invoices print with
+gaps and the page tells you which.
+
+- **Business details** — legal name, ABN, address, `support@kpve.com`, phone.
+  **An invoice with no ABN is not a tax invoice** — this is the one that matters.
+- **Tax / GST** — off by default, which is correct and legal if KPVE isn't
+  registered for GST. When you register, turn it on: leave **"Prices include
+  tax"** ticked (the normal Australian setup) and *nothing you've already priced
+  changes* — a $11 line stays $11 and the invoice just prints "Total includes GST
+  of $1.00". The page shows a live preview so you can see exactly what a client
+  will. Only untick "prices include tax" if you mean to add 10% **on top** of
+  every price, and it warns you when that changes what clients pay.
+- **Invoicing** — the invoice number prefix (`INV`), how many days until an
+  invoice is due, a footer line, and your **bank details** for clients who pay by
+  transfer instead of card.
+
+You can come back and change any of it. Changing your address or bank details
+only affects invoices you send *after* — the ones already sent keep what they said.
+
 ### 1. Build the catalogue — `/admin/services`
 
 This is the list of everything KPVE charges for. Add each one:
 
 - **Name** — "Emails", "Hosting", "Site build"
-- **Amount** and **Currency** — what it normally costs
+- **Unit price** and **Currency** — what *one* of them costs
+- **Unit label** — optional: "mailbox", "seat", "page". This is what lets a line
+  read "**4 mailboxes** × $11". Leave it blank for things you don't count.
 - **Billed** — One-off / Weekly / Monthly / Quarterly / Annually
 - **Description** — optional, what's included
 
@@ -127,6 +150,25 @@ they're actually buying.
 > Client came from somewhere else — a referral, a phone call? **Clients → + New
 > client**. Name and email is enough; it's a fifteen-second job.
 
+### Individual or company?
+
+When you make a new client (or edit one), the first choice is **Individual** or
+**Company**. It changes the rest of the form:
+
+- **Individual** — a person. Their name is the record.
+- **Company** — the **business name** is the record ("Rare Gem Exchange Pty Ltd"),
+  and you add the **contact person** separately ("Dimitrios"). You can also set
+  **Owned by** to link the company to an individual you already have — which is
+  how one person who runs several businesses becomes one relationship. Open that
+  individual and a **Businesses** card lists every company they own and the
+  combined monthly total.
+
+Either way, expand **Billing details** to set the legal name, **ABN**, billing
+email and address that appear on invoices. When you invoice a company, its ABN is
+what lets them claim the expense — so a company with no ABN gets a quiet warning
+until you add one. Converting a won enquiry always makes an *individual* (a person
+filled in the form); attach their company afterwards.
+
 ---
 
 ## Part 3 — Onboarding a client
@@ -138,18 +180,28 @@ Open the client (`/admin/clients/[id]`). The header shows what they're worth:
 
 Click **+ Add service**:
 
-1. **Service** — pick from the catalogue. Price and cycle prefill.
+1. **Service** — pick from the catalogue. Unit price and cycle prefill.
 2. **Shows on this client as** — rename if useful ("Hosting (staging + prod)").
-3. **Amount / Currency / Billed** — override for this client if the deal is
-   different. Perfectly normal.
-4. **Starts** — the start date. The next bill date is worked out from it.
-5. **Status** — **Awaiting payment** if they haven't paid yet.
+3. **Unit price × Qty** — the price of one, times how many. The total works
+   itself out beside them: `$11.00 × 4 = $44.00/mo`. You never type the total, so
+   you can't fat-finger it. Four mailboxes is quantity **4**, not a retyped $44.
+4. **Currency / Billed** — override for this client if the deal is different.
+5. **Starts** — the start date. The next bill date is worked out from it.
+6. **Status** — **Awaiting payment** if they haven't paid yet.
 
-Repeat for every line. One client can have as many as you like: Emails $11/mo +
-Hosting $30/mo + a one-off $2,500 build is three lines.
+Repeat for every line. One client can have as many as you like: Emails $44/mo
+(4 × $11) + Hosting $30/mo + a one-off $2,500 build is three lines.
 
 **Only "Active" lines count toward MRR.** That's the rule that keeps the revenue
 numbers honest.
+
+**What was actually set up.** Under each line is a **Provisioned** list — the real
+things you delivered. On the Emails line, add the four addresses
+(`dimitrios@raregem.com.au`, `accounts@…`); on Hosting, the domains. These get
+printed on the invoice, so the client sees exactly what they're paying for. If the
+number of things listed doesn't match the quantity you're billing (four addresses
+but billed for three), a one-click **"set quantity to 4"** prompt appears — it
+never changes the number behind your back.
 
 If the service had a checklist, its tasks are now sitting in **Tasks &
 follow-ups**, already dated.
@@ -177,6 +229,41 @@ own site, and pressing Pay runs the whole flow without money moving. Once a
 Stripe account is connected, the same button produces a real Stripe link and
 nothing else about your job changes. The Revenue page always says which mode
 you're in.
+
+### 7b. Send them an invoice
+
+A payment link takes money. An **invoice** is the document their accountant files
+to claim the expense — different job, and the one a business actually asks for.
+
+On the client page, the **Invoices** card → **New invoice**:
+
+1. **Tick the lines** to bill. The active ones are pre-ticked; a line you've
+   already invoiced is tagged but still available (reissuing is fine).
+2. Optionally set the **issue date**, **due date** (defaults to your payment
+   terms), a **PO number** and **notes**.
+3. **Create** — it lands as a **draft** so you can check it before it's a document.
+
+The invoice opens. It carries **your** ABN and address, the **client's** (the
+company's, when you invoiced a company), every line with its quantity and the
+provisioned addresses, and the GST treatment from Settings. While it's a draft you
+can edit or delete it. Then:
+
+- **Send** — marks it sent. Now **Copy client link** or **Email it** — the client
+  gets a read-only page at `/invoice/…` with a **Pay now** button (and your bank
+  details for transfers).
+- **Print** — your browser's *Save as PDF* produces the file. It's the same
+  document the client sees.
+- When they pay the link, the invoice marks itself **Paid**. Or click **Mark
+  paid** yourself if they paid another way.
+- A sent invoice can't be edited — that's deliberate, an issued invoice is a
+  record. If it's wrong, **Void** it and make a new one.
+
+The full list lives at **Invoices** in the sidebar, with a collections view:
+anything sent and past due flags red.
+
+> **A tax invoice needs your ABN.** If Settings is missing one, the invoice says
+> so at the top instead of quietly printing something the client's accountant will
+> reject. Fill in `/admin/settings` once and it's done.
 
 ### 8. Keep the record
 
@@ -242,9 +329,10 @@ changes, payments, sign-ins. Each row links to the record. This is how you answe
 
 1. **Overview** → clear anything in **Tasks due**
 2. **Enquiries** → triage anything marked **New**, reply, set status
-3. Won one? **Convert to client** → add services → send the payment link
+3. Won one? **Convert to client** → add services → send the payment link or an invoice
 4. **Overview** → anything in **Upcoming bills** due? Invoice it, hit **Mark billed**
-5. Spoke to a client? Log it in their **Timeline** before you forget
+5. **Invoices** → anything sent and overdue (red)? Chase it
+6. Spoke to a client? Log it in their **Timeline** before you forget
 
 ## Weekly / monthly
 

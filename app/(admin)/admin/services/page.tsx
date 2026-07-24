@@ -32,6 +32,12 @@ export default async function ServicesPage() {
           putting a client on it. No deploy needed.
         </p>
         <p className="mt-2 max-w-2xl text-sm text-[var(--admin-fg-muted)]">
+          Prices here are per <em>unit</em>. Give a service a unit label —
+          “mailbox”, “seat”, “page” — and a client on four of them is one line
+          reading <span className="font-medium">4 mailboxes × $11.00/mo</span>,
+          with the total worked out rather than typed.
+        </p>
+        <p className="mt-2 max-w-2xl text-sm text-[var(--admin-fg-muted)]">
           Each service can also carry an onboarding checklist — the steps that
           get created as dated tasks on a client the moment they&apos;re put on it.
         </p>
@@ -42,7 +48,7 @@ export default async function ServicesPage() {
         <StatCard
           label="Cheapest"
           value={onSale.length ? formatMoney(cheapest, currency) : "—"}
-          hint="Entry price on the list"
+          hint="Entry unit price on the list"
         />
         <StatCard
           label="Client subscriptions"

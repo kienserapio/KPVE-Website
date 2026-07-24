@@ -17,7 +17,11 @@ export type CheckoutRequest = {
   clientServiceId: string;
   clientId: string;
   label: string;
+  /** The whole line's price — unitAmountCents × quantity. Kept for the mock. */
   amountCents: number;
+  /** Price of one, so Stripe can itemise "4 × $11" instead of "1 × $44". */
+  unitAmountCents: number;
+  quantity: number;
   currency: string;
   interval: BillingInterval;
   clientName: string;

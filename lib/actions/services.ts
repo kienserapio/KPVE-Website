@@ -5,16 +5,19 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/dal/session";
 import {
   addClientService,
+  addServiceItem,
   createService,
   deleteService,
   markClientServiceBilled,
   removeClientService,
+  removeServiceItem,
   updateClientService,
   updateService,
 } from "@/lib/dal/services";
 import { addTaskTemplate, deleteTaskTemplate } from "@/lib/dal/checklists";
 import {
   createClientServiceSchema,
+  createServiceItemSchema,
   createServiceSchema,
   createTaskTemplateSchema,
   updateClientServiceSchema,
@@ -52,6 +55,7 @@ export async function createServiceAction(
     defaultAmount: formData.get("defaultAmount"),
     defaultCurrency: formData.get("defaultCurrency") || undefined,
     defaultInterval: formData.get("defaultInterval") || undefined,
+    unitLabel: formData.get("unitLabel") ?? undefined,
   });
 
   if (!parsed.success) {
@@ -66,6 +70,7 @@ export async function createServiceAction(
       defaultAmountCents: parsed.data.defaultAmount,
       defaultCurrency: parsed.data.defaultCurrency,
       defaultInterval: parsed.data.defaultInterval,
+      unitLabel: parsed.data.unitLabel,
     });
   } catch (error) {
     console.error("[createServiceAction]", error);
@@ -87,6 +92,7 @@ export async function updateServiceAction(
     defaultAmount: formData.get("defaultAmount"),
     defaultCurrency: formData.get("defaultCurrency") || undefined,
     defaultInterval: formData.get("defaultInterval") || undefined,
+    unitLabel: formData.get("unitLabel") ?? undefined,
     isActive: formData.get("isActive") ?? undefined,
   });
 
@@ -104,6 +110,10 @@ export async function updateServiceAction(
       defaultAmountCents: defaultAmount,
       defaultCurrency: rest.defaultCurrency,
       defaultInterval: rest.defaultInterval,
+      // `|| null` so blanking the field clears it — "this isn't counted" has to
+      // be sayable, and an empty string here would leave the old label behind
+      // (or store a "" that means the same thing as NULL but doesn't look it).
+      unitLabel: rest.unitLabel || null,
       isActive: rest.isActive,
     });
   } catch (error) {
@@ -198,7 +208,8 @@ export async function addClientServiceAction(
     clientId: formData.get("clientId"),
     serviceId: formData.get("serviceId") ?? undefined,
     label: formData.get("label"),
-    amount: formData.get("amount"),
+    unitAmount: formData.get("unitAmount"),
+    quantity: formData.get("quantity") || undefined,
     currency: formData.get("currency") || undefined,
     interval: formData.get("interval") || undefined,
     status: formData.get("status") || undefined,
@@ -216,7 +227,9 @@ export async function addClientServiceAction(
       clientId: parsed.data.clientId,
       serviceId: parsed.data.serviceId,
       label: parsed.data.label,
-      amountCents: parsed.data.amount,
+      // Unit and quantity, never a total — the DAL multiplies them.
+      unitAmountCents: parsed.data.unitAmount,
+      quantity: parsed.data.quantity,
       currency: parsed.data.currency,
       interval: parsed.data.interval,
       status: parsed.data.status,
@@ -241,7 +254,8 @@ export async function updateClientServiceAction(
   const parsed = updateClientServiceSchema.safeParse({
     clientServiceId: formData.get("clientServiceId"),
     label: formData.get("label") || undefined,
-    amount: formData.get("amount") || undefined,
+    unitAmount: formData.get("unitAmount") || undefined,
+    quantity: formData.get("quantity") ?? undefined,
     currency: formData.get("currency") || undefined,
     interval: formData.get("interval") || undefined,
     status: formData.get("status") || undefined,
@@ -254,13 +268,16 @@ export async function updateClientServiceAction(
     return fail(parsed.error.issues[0]?.message ?? "Those changes couldn't be saved.");
   }
 
-  const { clientServiceId, amount, ...rest } = parsed.data;
+  const { clientServiceId, unitAmount, quantity, ...rest } = parsed.data;
 
   try {
     await requireSession();
+    // Either half may be absent — the "set quantity to 4" prompt posts nothing
+    // but a quantity. The DAL reads the other half back and recomputes.
     const { clientId } = await updateClientService(clientServiceId, {
       label: rest.label,
-      amountCents: amount,
+      unitAmountCents: unitAmount,
+      quantity,
       currency: rest.currency,
       interval: rest.interval,
       status: rest.status,
@@ -327,5 +344,50 @@ export async function removeClientServiceAction(formData: FormData): Promise<voi
     revalidatePath("/admin");
   } catch (error) {
     console.error("[removeClientServiceAction]", error);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Provisioned items
+
+   Only the client page is revalidated: items describe what a line covers, not
+   what it's worth, so no MRR anywhere else moves when one is added or removed.
+--------------------------------------------------------------------------- */
+
+export async function addServiceItemAction(
+  _prev: ServiceActionState,
+  formData: FormData,
+): Promise<ServiceActionState> {
+  const parsed = createServiceItemSchema.safeParse({
+    clientServiceId: formData.get("clientServiceId"),
+    label: formData.get("label"),
+  });
+
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Couldn't add that.");
+  }
+
+  try {
+    await requireSession();
+    const { clientId } = await addServiceItem(parsed.data);
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[addServiceItemAction]", error);
+    return fail(mapError(error));
+  }
+
+  return { ok: true, error: null };
+}
+
+export async function removeServiceItemAction(formData: FormData): Promise<void> {
+  const itemId = String(formData.get("itemId") ?? "");
+  if (!itemId) return;
+
+  try {
+    await requireSession();
+    const { clientId } = await removeServiceItem(itemId);
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[removeServiceItemAction]", error);
   }
 }

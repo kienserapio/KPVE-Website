@@ -144,10 +144,13 @@ export class StripePaymentProvider implements PaymentProvider {
       metadata,
       line_items: [
         {
-          quantity: 1,
+          // Itemised: Stripe shows "4 × $11.00", and for a subscription the
+          // quantity is what a renewal multiplies, so both the total and the
+          // receipt read the way the invoice does.
+          quantity: request.quantity,
           price_data: {
             currency: request.currency.toLowerCase(),
-            unit_amount: request.amountCents,
+            unit_amount: request.unitAmountCents,
             product_data: { name: request.label },
             ...(recurring ? { recurring } : {}),
           },

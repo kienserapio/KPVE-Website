@@ -18,9 +18,12 @@ const initialState: ClientActionState = { ok: false, error: null };
 export function ClientEditor({
   client,
   staffOptions,
+  parentOptions,
 }: {
   client: ClientDetail;
   staffOptions: StaffOption[];
+  /** Individual clients offered in the "Owned by" picker, this one excluded. */
+  parentOptions?: { id: string; name: string }[];
 }) {
   const [state, formAction, pending] = useActionState(updateClientAction, initialState);
   const saved = state.ok && !pending;
@@ -34,15 +37,23 @@ export function ClientEditor({
           variant="edit"
           defaults={{
             name: client.name,
+            clientType: client.clientType,
+            contactName: client.contactName,
             company: client.company,
+            parentClientId: client.parentClientId,
             email: client.email,
             phone: client.phone,
             category: client.category,
             status: client.status,
             assignedStaffId: client.assignedStaffId,
             notes: client.notes,
+            billingName: client.billingName,
+            billingAbn: client.billingAbn,
+            billingEmail: client.billingEmail,
+            billingAddress: client.billingAddress,
           }}
           staffOptions={staffOptions}
+          parentOptions={parentOptions}
         />
 
         {client.legacyValue && (

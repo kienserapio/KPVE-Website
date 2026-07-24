@@ -1,10 +1,11 @@
 import "server-only";
 
-import { and, asc, count, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, lte, max, sql } from "drizzle-orm";
 
 import { db } from "@/lib/db";
 import {
   clients,
+  clientServiceItems,
   clientServices,
   services,
   serviceTaskTemplates,
@@ -12,6 +13,8 @@ import {
   type ClientServiceStatus,
 } from "@/lib/db/schema";
 import {
+  lineTotalCents,
+  MAX_QUANTITY,
   monthlyCents,
   nextBillFrom,
   summarize,
@@ -34,6 +37,8 @@ export type ServiceItem = {
   defaultAmountCents: number;
   defaultCurrency: string;
   defaultInterval: BillingInterval;
+  /** What one unit IS — "mailbox", "seat". Null for things that aren't counted. */
+  unitLabel: string | null;
   isActive: boolean;
   /** How many clients are on this service right now — drives "in use" copy. */
   activeClients: number;
@@ -79,6 +84,7 @@ export async function listServices(
       defaultAmountCents: services.defaultAmountCents,
       defaultCurrency: services.defaultCurrency,
       defaultInterval: services.defaultInterval,
+      unitLabel: services.unitLabel,
       isActive: services.isActive,
       activeClients: activeClientsExpr,
       checklistItems: checklistItemsExpr,
@@ -95,6 +101,7 @@ export async function createService(input: {
   defaultAmountCents: number;
   defaultCurrency: string;
   defaultInterval: BillingInterval;
+  unitLabel?: string | null;
 }): Promise<{ id: string }> {
   const staff = await requireSession();
 
@@ -107,6 +114,7 @@ export async function createService(input: {
       defaultAmountCents: input.defaultAmountCents,
       defaultCurrency: input.defaultCurrency,
       defaultInterval: input.defaultInterval,
+      unitLabel: input.unitLabel || null,
       createdBy: staff.id,
     })
     .returning({ id: services.id });
@@ -149,6 +157,8 @@ export async function updateService(
     defaultAmountCents?: number;
     defaultCurrency?: string;
     defaultInterval?: BillingInterval;
+    /** `null` clears it — blanking the field is how "not counted" is said. */
+    unitLabel?: string | null;
     isActive?: boolean;
   },
 ): Promise<void> {
@@ -161,6 +171,7 @@ export async function updateService(
     "defaultAmountCents",
     "defaultCurrency",
     "defaultInterval",
+    "unitLabel",
     "isActive",
   ] as const) {
     if (patch[key] !== undefined) set[key] = patch[key];
@@ -213,10 +224,19 @@ export async function deleteService(id: string): Promise<void> {
    Client services — the billable lines on one client
 --------------------------------------------------------------------------- */
 
+/** One thing provisioned under a line — a mailbox address, a domain. */
+export type ProvisionedItem = {
+  id: string;
+  label: string;
+};
+
 export type ClientServiceItem = {
   id: string;
   serviceId: string | null;
   label: string;
+  /** The price of ONE, and how many. `amountCents` below is their product. */
+  unitAmountCents: number;
+  quantity: number;
   amountCents: number;
   currency: string;
   interval: BillingInterval;
@@ -224,6 +244,8 @@ export type ClientServiceItem = {
   startedAt: Date | null;
   nextBillAt: Date | null;
   notes: string | null;
+  /** The addresses/domains set up under this line, in staff order. */
+  items: ProvisionedItem[];
   /** Computed server-side so the client component never calls Date.now(). */
   overdue: boolean;
   /* Payment-link state — see lib/dal/payments.ts. */
@@ -243,6 +265,8 @@ export async function listClientServices(clientId: string): Promise<ClientServic
       id: clientServices.id,
       serviceId: clientServices.serviceId,
       label: clientServices.label,
+      unitAmountCents: clientServices.unitAmountCents,
+      quantity: clientServices.quantity,
       amountCents: clientServices.amountCents,
       currency: clientServices.currency,
       interval: clientServices.interval,
@@ -266,9 +290,15 @@ export async function listClientServices(clientId: string): Promise<ClientServic
       desc(clientServices.createdAt),
     );
 
+  // Every line's provisioned items in ONE query, grouped in JS. A query per
+  // line would be an N+1 on the page that already renders the whole client,
+  // and the client page is the one screen the team keeps open all day.
+  const itemsByLine = await loadServiceItems(rows.map((row) => row.id));
+
   const now = Date.now();
   return rows.map((row) => ({
     ...row,
+    items: itemsByLine.get(row.id) ?? [],
     overdue:
       row.status === "active" && row.nextBillAt
         ? row.nextBillAt.getTime() < now
@@ -276,16 +306,69 @@ export async function listClientServices(clientId: string): Promise<ClientServic
   }));
 }
 
+async function loadServiceItems(
+  clientServiceIds: string[],
+): Promise<Map<string, ProvisionedItem[]>> {
+  const byLine = new Map<string, ProvisionedItem[]>();
+  // inArray with an empty list is an invalid query, and a client with no
+  // billable lines is the normal state of a brand-new client.
+  if (clientServiceIds.length === 0) return byLine;
+
+  const rows = await db
+    .select({
+      id: clientServiceItems.id,
+      clientServiceId: clientServiceItems.clientServiceId,
+      label: clientServiceItems.label,
+    })
+    .from(clientServiceItems)
+    .where(inArray(clientServiceItems.clientServiceId, clientServiceIds))
+    .orderBy(asc(clientServiceItems.position), asc(clientServiceItems.createdAt));
+
+  for (const row of rows) {
+    const list = byLine.get(row.clientServiceId);
+    if (list) list.push({ id: row.id, label: row.label });
+    else byLine.set(row.clientServiceId, [{ id: row.id, label: row.label }]);
+  }
+
+  return byLine;
+}
+
 /** Per-currency MRR/ARR/one-off for one client. Only `active` lines count. */
 export function summarizeClientServices(items: ClientServiceItem[]): CurrencyTotal[] {
   return summarize(items.filter((i) => i.status === "active"));
+}
+
+/**
+ * THE INVARIANT. `client_services.amount_cents` is the LINE TOTAL and is always
+ * `unit_amount_cents × quantity`.
+ *
+ * This is the only place that number is produced, and the only place any of
+ * the three columns is assigned. Everything downstream reads `amount_cents` and
+ * trusts it — the MRR SQL in lib/dal/clients.ts, summarize(), the revenue
+ * snapshots, the CSV export, the Stripe `price_data`, the upcoming-bills list —
+ * so a writer that moved the quantity without the total, or the total without
+ * the halves, would make every one of those numbers quietly wrong with nothing
+ * on screen to show it. Funnelling both writers through here is what makes
+ * "they can't disagree" a property of the code rather than a habit.
+ *
+ * The clamps mirror lineTotalCents()'s own so the stored trio is self-
+ * consistent: a quantity that got clamped on the way into the total must be
+ * the quantity that gets stored, or the row contradicts itself.
+ */
+function priceLine(unitAmountCents: number, quantity: number) {
+  const unit = Math.max(Math.trunc(unitAmountCents) || 0, 0);
+  const qty = Math.min(Math.max(Math.trunc(quantity) || 1, 1), MAX_QUANTITY);
+
+  return { unitAmountCents: unit, quantity: qty, amountCents: lineTotalCents(unit, qty) };
 }
 
 export async function addClientService(input: {
   clientId: string;
   serviceId?: string;
   label: string;
-  amountCents: number;
+  /** The price of ONE. The total is derived — see priceLine(). */
+  unitAmountCents: number;
+  quantity: number;
   currency: string;
   interval: BillingInterval;
   status: ClientServiceStatus;
@@ -303,6 +386,7 @@ export async function addClientService(input: {
   if (!client) throw new Error("NOT_FOUND");
 
   const startedAt = input.startedAt ?? new Date();
+  const priced = priceLine(input.unitAmountCents, input.quantity);
 
   const [row] = await db
     .insert(clientServices)
@@ -310,7 +394,7 @@ export async function addClientService(input: {
       clientId: input.clientId,
       serviceId: input.serviceId ?? null,
       label: input.label,
-      amountCents: input.amountCents,
+      ...priced,
       currency: input.currency,
       interval: input.interval,
       status: input.status,
@@ -343,7 +427,9 @@ export async function addClientService(input: {
     metadata: {
       clientServiceId: row.id,
       label: input.label,
-      amountCents: input.amountCents,
+      unitAmountCents: priced.unitAmountCents,
+      quantity: priced.quantity,
+      amountCents: priced.amountCents,
       currency: input.currency,
       interval: input.interval,
       tasksCreated,
@@ -357,7 +443,9 @@ export async function updateClientService(
   id: string,
   patch: {
     label?: string;
-    amountCents?: number;
+    /** Either half may move alone; the total is recomputed from the pair. */
+    unitAmountCents?: number;
+    quantity?: number;
     currency?: string;
     interval?: BillingInterval;
     status?: ClientServiceStatus;
@@ -371,7 +459,6 @@ export async function updateClientService(
   const set: Record<string, unknown> = { updatedAt: new Date() };
   for (const key of [
     "label",
-    "amountCents",
     "currency",
     "interval",
     "status",
@@ -380,6 +467,33 @@ export async function updateClientService(
     "notes",
   ] as const) {
     if (patch[key] !== undefined) set[key] = patch[key];
+  }
+
+  // Price and quantity are never written on their own: either one moving
+  // changes the line total, so the half that wasn't supplied is read back and
+  // all three columns are rewritten together by priceLine(). The case this
+  // exists for is the one-click "set quantity to 4" — a quantity-only save
+  // that left amount_cents at $11 would under-report this client's MRR by $33
+  // a month, for as long as nobody re-saved the line.
+  if (patch.unitAmountCents !== undefined || patch.quantity !== undefined) {
+    const [current] = await db
+      .select({
+        unitAmountCents: clientServices.unitAmountCents,
+        quantity: clientServices.quantity,
+      })
+      .from(clientServices)
+      .where(eq(clientServices.id, id))
+      .limit(1);
+
+    if (!current) throw new Error("NOT_FOUND");
+
+    Object.assign(
+      set,
+      priceLine(
+        patch.unitAmountCents ?? current.unitAmountCents,
+        patch.quantity ?? current.quantity,
+      ),
+    );
   }
 
   // Cancelling stamps the date and stops the billing clock; un-cancelling clears
@@ -510,6 +624,100 @@ async function touchClient(clientId: string): Promise<void> {
 }
 
 /* ---------------------------------------------------------------------------
+   Provisioned items — the four mailbox addresses behind "Emails × 4"
+
+   Adding one deliberately does NOT bump the line's quantity. Billed quantity
+   and provisioned count should agree, but a person chose that quantity, and
+   moving it behind their back turns a visible mistake into an invisible one.
+   The UI offers the correction instead (see ClientServices.tsx).
+--------------------------------------------------------------------------- */
+
+export async function addServiceItem(input: {
+  clientServiceId: string;
+  label: string;
+}): Promise<{ clientId: string }> {
+  const staff = await requireSession();
+
+  // The owning client, both to guard a stale line id and because the action
+  // needs it to revalidate the client page.
+  const [line] = await db
+    .select({ clientId: clientServices.clientId, label: clientServices.label })
+    .from(clientServices)
+    .where(eq(clientServices.id, input.clientServiceId))
+    .limit(1);
+
+  if (!line) throw new Error("NOT_FOUND");
+
+  // Append. Position is staff order rather than insertion order, so the fifth
+  // mailbox added in March lands at the bottom of the list where it belongs.
+  const [{ highest }] = await db
+    .select({ highest: max(clientServiceItems.position) })
+    .from(clientServiceItems)
+    .where(eq(clientServiceItems.clientServiceId, input.clientServiceId));
+
+  const [row] = await db
+    .insert(clientServiceItems)
+    .values({
+      clientServiceId: input.clientServiceId,
+      label: input.label,
+      position: (highest ?? 0) + 1,
+    })
+    .returning({ id: clientServiceItems.id });
+
+  await touchClient(line.clientId);
+
+  await logActivity({
+    actorType: "staff",
+    actorId: staff.id,
+    entityType: "client",
+    entityId: line.clientId,
+    action: "client_service.item_added",
+    metadata: {
+      clientServiceId: input.clientServiceId,
+      itemId: row.id,
+      line: line.label,
+      label: input.label,
+    },
+  });
+
+  return { clientId: line.clientId };
+}
+
+export async function removeServiceItem(id: string): Promise<{ clientId: string }> {
+  const staff = await requireSession();
+
+  // Read the owning client BEFORE deleting: the join is the only way back to
+  // it, and after the delete there is nothing left to join to.
+  const [item] = await db
+    .select({
+      label: clientServiceItems.label,
+      clientServiceId: clientServiceItems.clientServiceId,
+      clientId: clientServices.clientId,
+    })
+    .from(clientServiceItems)
+    .innerJoin(clientServices, eq(clientServiceItems.clientServiceId, clientServices.id))
+    .where(eq(clientServiceItems.id, id))
+    .limit(1);
+
+  if (!item) throw new Error("NOT_FOUND");
+
+  await db.delete(clientServiceItems).where(eq(clientServiceItems.id, id));
+
+  await touchClient(item.clientId);
+
+  await logActivity({
+    actorType: "staff",
+    actorId: staff.id,
+    entityType: "client",
+    entityId: item.clientId,
+    action: "client_service.item_removed",
+    metadata: { clientServiceId: item.clientServiceId, label: item.label },
+  });
+
+  return { clientId: item.clientId };
+}
+
+/* ---------------------------------------------------------------------------
    Revenue rollups — for the Overview
 --------------------------------------------------------------------------- */
 
@@ -605,7 +813,7 @@ export async function getRevenueSummary(): Promise<RevenueSummary> {
   >();
   for (const line of activeLines) {
     const currency = line.currency.toUpperCase();
-    const key = `${line.label} ${currency}`;
+    const key = `${line.label} ${currency}`;
     const entry =
       grouped.get(key) ??
       { label: line.label, mrrCents: 0, currency, clients: new Set<string>() };

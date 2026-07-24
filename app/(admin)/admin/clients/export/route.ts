@@ -2,7 +2,11 @@ import { requireSession } from "@/lib/dal/session";
 import { exportClients } from "@/lib/dal/clients";
 import { clientFiltersSchema } from "@/lib/validation";
 import { toCsv, csvDateStamp } from "@/lib/csv";
-import { CATEGORY_LABELS, CLIENT_STATUS_LABELS } from "@/components/admin/ui";
+import {
+  CATEGORY_LABELS,
+  CLIENT_STATUS_LABELS,
+  CLIENT_TYPE_LABELS,
+} from "@/components/admin/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +21,7 @@ export async function GET(request: Request) {
   const parsed = clientFiltersSchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
     category: url.searchParams.get("category") ?? undefined,
+    type: url.searchParams.get("type") ?? undefined,
     q: url.searchParams.get("q") ?? undefined,
   });
   const filters = parsed.success ? parsed.data : {};
@@ -26,7 +31,10 @@ export async function GET(request: Request) {
   const csv = toCsv(
     [
       "Name",
+      "Type",
+      "Contact person",
       "Company",
+      "Owned by",
       "Email",
       "Phone",
       "Category",
@@ -43,7 +51,10 @@ export async function GET(request: Request) {
     ],
     rows.map((r) => [
       r.name,
+      CLIENT_TYPE_LABELS[r.clientType],
+      r.contactName,
       r.company,
+      r.parentName,
       r.email,
       r.phone,
       CATEGORY_LABELS[r.category],

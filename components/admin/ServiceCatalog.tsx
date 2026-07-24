@@ -120,6 +120,7 @@ function ServiceRow({
               service.defaultInterval,
             )}
           </Money>
+          {service.unitLabel && <span>· per {service.unitLabel}</span>}
           {service.defaultCurrency !== DEFAULT_CURRENCY && (
             <span>· {service.defaultCurrency}</span>
           )}
@@ -339,8 +340,9 @@ function NewServiceForm() {
     <Card className="p-5">
       <h2 className="text-sm font-semibold tracking-tight">Add a service</h2>
       <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
-        Anything you charge for. The price and cycle here are just the defaults —
-        both stay editable per client.
+        Anything you charge for. The price here is the price of <em>one</em> — a
+        client on four of them is one line with a quantity, not four lines. It
+        and the cycle are defaults; both stay editable per client.
       </p>
 
       <form ref={formRef} action={formAction} className="mt-4 flex flex-col gap-4">
@@ -350,7 +352,7 @@ function NewServiceForm() {
             <AdminInput id="new-name" name="name" required placeholder="e.g. Emails" />
           </div>
           <div>
-            <AdminLabel htmlFor="new-amount">Amount</AdminLabel>
+            <AdminLabel htmlFor="new-amount">Unit price</AdminLabel>
             <AdminInput
               id="new-amount"
               name="defaultAmount"
@@ -392,7 +394,21 @@ function NewServiceForm() {
               ))}
             </select>
           </div>
-          <div className="sm:col-span-3">
+          <div>
+            <AdminLabel htmlFor="new-unit-label">Unit label</AdminLabel>
+            <AdminInput
+              id="new-unit-label"
+              name="unitLabel"
+              placeholder="mailbox"
+              maxLength={40}
+            />
+            <p className="mt-1.5 text-xs text-[var(--admin-fg-subtle)]">
+              What one of these <em>is</em> — it&apos;s what makes a client&apos;s line
+              read “4 mailboxes × $11” instead of “4 × $11”. Leave blank for
+              anything that isn&apos;t counted.
+            </p>
+          </div>
+          <div className="sm:col-span-2">
             <AdminLabel htmlFor="new-description">Description</AdminLabel>
             <AdminInput
               id="new-description"
@@ -451,7 +467,7 @@ function EditServiceForm({
           />
         </div>
         <div>
-          <AdminLabel htmlFor={`amount-${service.id}`}>Amount</AdminLabel>
+          <AdminLabel htmlFor={`amount-${service.id}`}>Unit price</AdminLabel>
           <AdminInput
             id={`amount-${service.id}`}
             name="defaultAmount"
@@ -493,7 +509,20 @@ function EditServiceForm({
             ))}
           </select>
         </div>
-        <div className="sm:col-span-3">
+        <div>
+          <AdminLabel htmlFor={`unit-label-${service.id}`}>Unit label</AdminLabel>
+          <AdminInput
+            id={`unit-label-${service.id}`}
+            name="unitLabel"
+            placeholder="mailbox"
+            maxLength={40}
+            defaultValue={service.unitLabel ?? ""}
+          />
+          <p className="mt-1.5 text-xs text-[var(--admin-fg-subtle)]">
+            Makes a line read “4 mailboxes × $11”. Blank if it isn&apos;t counted.
+          </p>
+        </div>
+        <div className="sm:col-span-2">
           <AdminLabel htmlFor={`description-${service.id}`}>Description</AdminLabel>
           <AdminTextarea
             id={`description-${service.id}`}

@@ -1,12 +1,19 @@
 import Link from "next/link";
 
 import { verifySession } from "@/lib/dal/session";
+import { listIndividualClients } from "@/lib/dal/clients";
 import { listActiveStaff } from "@/lib/dal/staff";
 import { ClientForm } from "@/components/admin/ClientForm";
 
 export default async function NewClientPage() {
   await verifySession();
-  const staffOptions = await listActiveStaff();
+  // The individuals a new business can be owned by. Fetched even when the form
+  // opens as "Individual" — the choice is one click away and re-fetching on it
+  // would mean a round trip in the middle of typing.
+  const [staffOptions, parentOptions] = await Promise.all([
+    listActiveStaff(),
+    listIndividualClients(),
+  ]);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
@@ -24,7 +31,7 @@ export default async function NewClientPage() {
         </p>
       </div>
 
-      <ClientForm staffOptions={staffOptions} />
+      <ClientForm staffOptions={staffOptions} parentOptions={parentOptions} />
     </div>
   );
 }

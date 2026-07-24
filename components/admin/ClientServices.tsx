@@ -4,8 +4,10 @@ import { useActionState, useEffect, useRef, useState } from "react";
 
 import {
   addClientServiceAction,
+  addServiceItemAction,
   markBilledAction,
   removeClientServiceAction,
+  removeServiceItemAction,
   setClientServiceStatusAction,
   updateClientServiceAction,
   type ServiceActionState,
@@ -22,8 +24,13 @@ import {
   CURRENCIES,
   DEFAULT_CURRENCY,
   formatMoney,
+  formatQuantityLine,
   formatRate,
   INTERVAL_LABELS,
+  INTERVAL_SUFFIX,
+  lineTotalCents,
+  MAX_QUANTITY,
+  parseAmountToCents,
 } from "@/lib/billing";
 import type { BillingInterval } from "@/lib/db/schema";
 import { cn, formatDate } from "@/lib/utils";
@@ -50,6 +57,45 @@ function dateInputValue(date: Date | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/**
+ * "$11.00 × 4 = $44.00/mo" — the live total under a unit-price/qty pair, so
+ * the number that gets stored is on screen before anyone presses Save. All of
+ * the maths is lineTotalCents()'s; this only formats it. `alwaysCents` on both
+ * sides because a price being edited reads better as $11.00 than $11.
+ */
+function totalPreview(
+  unitInput: string,
+  quantityInput: string,
+  currency: string,
+  interval: BillingInterval,
+): string | null {
+  const unitCents = parseAmountToCents(unitInput);
+  if (unitCents === null) return null;
+
+  const quantity = Number(quantityInput);
+  const totalCents = lineTotalCents(unitCents, quantity);
+
+  return (
+    `${formatMoney(unitCents, currency, { alwaysCents: true })} × ` +
+    `${Number.isFinite(quantity) ? Math.max(Math.trunc(quantity), 1) : 1} = ` +
+    `${formatMoney(totalCents, currency, { alwaysCents: true })}${INTERVAL_SUFFIX[interval]}`
+  );
+}
+
+function TotalPreview({ value }: { value: string | null }) {
+  return (
+    <p className="text-xs text-[var(--admin-fg-subtle)]">
+      {value ? (
+        <>
+          Line total <span className="font-medium tabular-nums text-[var(--admin-fg)]">{value}</span>
+        </>
+      ) : (
+        "Enter a unit price to see the line total."
+      )}
+    </p>
+  );
+}
+
 /* ---------------------------------------------------------------------------
    The billing panel on a client: what they're on, and what to do about it.
 --------------------------------------------------------------------------- */
@@ -71,6 +117,13 @@ export function ClientServices({
   const [adding, setAdding] = useState(services.length === 0);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // "mailbox" belongs to the catalogue entry, not to the line, so it's looked
+  // up once here rather than by each row. A line whose catalogue entry was
+  // archived or deleted simply has no unit noun — it still prices correctly.
+  const unitLabels = new Map(catalogue.map((service) => [service.id, service.unitLabel]));
+  const unitLabelFor = (line: ClientServiceItem) =>
+    (line.serviceId ? unitLabels.get(line.serviceId) : null) ?? null;
+
   return (
     <div className="flex flex-col gap-5">
       {services.length > 0 && (
@@ -78,12 +131,17 @@ export function ClientServices({
           {services.map((line) =>
             editingId === line.id ? (
               <li key={line.id} className="py-4">
-                <EditServiceForm line={line} onDone={() => setEditingId(null)} />
+                <EditServiceForm
+                  line={line}
+                  unitLabel={unitLabelFor(line)}
+                  onDone={() => setEditingId(null)}
+                />
               </li>
             ) : (
               <ServiceRow
                 key={line.id}
                 line={line}
+                unitLabel={unitLabelFor(line)}
                 clientId={clientId}
                 clientName={clientName}
                 clientEmail={clientEmail}
@@ -118,12 +176,14 @@ export function ClientServices({
 
 function ServiceRow({
   line,
+  unitLabel,
   clientId,
   clientName,
   clientEmail,
   onEdit,
 }: {
   line: ClientServiceItem;
+  unitLabel: string | null;
   clientId: string;
   clientName: string;
   clientEmail: string;
@@ -140,9 +200,26 @@ function ServiceRow({
           <ServiceStatusBadge status={line.status} />
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[var(--admin-fg-subtle)]">
+          {/* At quantity 1 this is exactly the rate it has always been — no
+              "1 ×" noise on the lines that are most of them. Above 1 the unit
+              price leads and the total follows it. */}
           <Money muted className="font-medium">
-            {formatRate(line.amountCents, line.currency, line.interval)}
+            {formatQuantityLine(
+              line.unitAmountCents,
+              line.quantity,
+              line.currency,
+              line.interval,
+              unitLabel,
+            )}
           </Money>
+          {line.quantity > 1 && (
+            <span>
+              ·{" "}
+              <Money muted className="font-medium">
+                {formatRate(line.amountCents, line.currency, line.interval)}
+              </Money>
+            </span>
+          )}
           {line.currency !== DEFAULT_CURRENCY && <span>· {line.currency}</span>}
           {line.interval !== "one_off" && line.status === "active" && (
             <span className={cn(line.overdue && "font-medium text-red-500")}>
@@ -162,6 +239,8 @@ function ServiceRow({
         {line.notes && (
           <p className="mt-1 text-xs text-[var(--admin-fg-muted)]">{line.notes}</p>
         )}
+
+        <ProvisionedItems line={line} unitLabel={unitLabel} />
 
         <PaymentLink
           line={line}
@@ -226,6 +305,145 @@ function ServiceRow({
         )}
       </div>
     </li>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Provisioned
+
+   What was actually set up under the line: the four mailbox addresses behind
+   "Emails × 4", the domains behind Hosting, the deliverables behind a build.
+   Having them here is what lets the client page answer "what are they paying
+   for" without opening anything, and what the invoice prints under the line.
+--------------------------------------------------------------------------- */
+
+function ProvisionedItems({
+  line,
+  unitLabel,
+}: {
+  line: ClientServiceItem;
+  unitLabel: string | null;
+}) {
+  const [state, formAction, pending] = useActionState(addServiceItemAction, initialState);
+  // Quiet until there's something to show. A line nobody has provisioned
+  // anything under stays as short as it is today.
+  const [open, setOpen] = useState(line.items.length > 0);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (state.ok) formRef.current?.reset();
+  }, [state.ok]);
+
+  const noun = unitLabel?.trim() || "item";
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 self-start text-[11px] font-medium text-[var(--admin-fg-subtle)] transition hover:text-[var(--admin-fg)]"
+      >
+        + Provisioned {noun}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+        Provisioned
+      </p>
+
+      {line.items.length > 0 && (
+        <ul className="flex flex-col gap-1.5">
+          {line.items.map((item) => (
+            <li key={item.id} className="flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-md border border-[var(--admin-border)] bg-[var(--admin-surface-2)] px-2 py-1.5 text-[11px] text-[var(--admin-fg-muted)]">
+                {item.label}
+              </code>
+              <form action={removeServiceItemAction}>
+                <input type="hidden" name="itemId" value={item.id} />
+                <button
+                  type="submit"
+                  aria-label={`Remove ${item.label}`}
+                  className="rounded p-1 text-[var(--admin-fg-subtle)] transition hover:text-red-500"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="size-3.5">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </form>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {line.items.length > 0 && line.items.length !== line.quantity && (
+        <QuantityMismatch line={line} />
+      )}
+
+      <form ref={formRef} action={formAction} className="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="clientServiceId" value={line.id} />
+        <label className="sr-only" htmlFor={`item-${line.id}`}>
+          Add a provisioned {noun} to {line.label}
+        </label>
+        <AdminInput
+          id={`item-${line.id}`}
+          name="label"
+          required
+          placeholder="name@theirdomain.com.au"
+          className="min-w-[12rem] flex-1 py-1.5 text-xs"
+        />
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)] disabled:opacity-60"
+        >
+          {pending ? "Adding" : "Add"}
+        </button>
+      </form>
+
+      {state.error && (
+        <p role="alert" className="text-xs text-red-500">
+          {state.error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Provisioned count and billed quantity should agree. When they don't, say so
+ * and offer the fix in one click — never apply it silently. Somebody typed
+ * that quantity, and a mismatch is usually a mistake worth seeing rather than
+ * a number worth overwriting behind their back.
+ */
+function QuantityMismatch({ line }: { line: ClientServiceItem }) {
+  const [state, formAction, pending] = useActionState(updateClientServiceAction, initialState);
+  const listed = line.items.length;
+
+  return (
+    <form action={formAction} className="flex flex-wrap items-center gap-1.5">
+      <input type="hidden" name="clientServiceId" value={line.id} />
+      {/* Quantity only — the DAL reads the unit price back and recomputes the
+          line total, so this cannot leave a stale amount behind. */}
+      <input type="hidden" name="quantity" value={listed} />
+      <span className="text-[11px] text-[var(--admin-fg-muted)]">
+        {listed} item{listed === 1 ? "" : "s"} listed, billed for {line.quantity} —
+      </span>
+      <button
+        type="submit"
+        disabled={pending}
+        className="text-[11px] font-medium text-[var(--admin-accent)] underline underline-offset-2 transition hover:opacity-80 disabled:opacity-60"
+      >
+        {pending ? "Setting quantity" : `set quantity to ${listed}`}
+      </button>
+      {state.error && (
+        <span role="alert" className="text-[11px] text-red-500">
+          {state.error}
+        </span>
+      )}
+    </form>
   );
 }
 
@@ -392,11 +610,14 @@ function AddServiceForm({
 }) {
   const [state, formAction, pending] = useActionState(addClientServiceAction, initialState);
 
-  // Picking from the catalogue prefills price and cycle; every one stays
-  // editable, because "Hosting, but $50 for this client" is a normal Tuesday.
+  // Picking from the catalogue prefills price, cycle and unit noun; every one
+  // stays editable, because "Hosting, but $50 for this client" is a normal
+  // Tuesday.
   const [serviceId, setServiceId] = useState("");
   const [label, setLabel] = useState("");
-  const [amount, setAmount] = useState("");
+  const [unitAmount, setUnitAmount] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [unitLabel, setUnitLabel] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string>(DEFAULT_CURRENCY);
   const [interval, setInterval] = useState<BillingInterval>("monthly");
 
@@ -412,12 +633,14 @@ function AddServiceForm({
     const chosen = catalogue.find((s) => s.id === id);
     if (!chosen) return;
     setLabel(chosen.name);
-    setAmount(centsToInput(chosen.defaultAmountCents));
+    setUnitAmount(centsToInput(chosen.defaultAmountCents));
+    setUnitLabel(chosen.unitLabel);
     setCurrency(chosen.defaultCurrency);
     setInterval(chosen.defaultInterval);
   }
 
   const active = catalogue.filter((s) => s.isActive);
+  const preview = totalPreview(unitAmount, quantity, currency, interval);
 
   return (
     <form
@@ -470,15 +693,30 @@ function AddServiceForm({
 
       <div className="grid gap-4 sm:grid-cols-4">
         <div>
-          <AdminLabel htmlFor="amount">Amount</AdminLabel>
+          <AdminLabel htmlFor="unitAmount">Unit price</AdminLabel>
           <AdminInput
-            id="amount"
-            name="amount"
+            id="unitAmount"
+            name="unitAmount"
             required
             inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            value={unitAmount}
+            onChange={(e) => setUnitAmount(e.target.value)}
             placeholder="11.00"
+          />
+        </div>
+        <div>
+          <AdminLabel htmlFor="quantity">
+            Qty{unitLabel ? ` (${unitLabel})` : ""}
+          </AdminLabel>
+          <AdminInput
+            id="quantity"
+            name="quantity"
+            type="number"
+            min={1}
+            max={MAX_QUANTITY}
+            step={1}
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
           />
         </div>
         <div>
@@ -513,6 +751,11 @@ function AddServiceForm({
             ))}
           </select>
         </div>
+      </div>
+
+      <TotalPreview value={preview} />
+
+      <div className="grid gap-4 sm:grid-cols-3">
         <div>
           <AdminLabel htmlFor="startedAt">Starts</AdminLabel>
           <input
@@ -522,9 +765,6 @@ function AddServiceForm({
             className={selectClass}
           />
         </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <AdminLabel htmlFor="status">Status</AdminLabel>
           <select id="status" name="status" defaultValue="active" className={selectClass}>
@@ -574,17 +814,28 @@ function AddServiceForm({
 
 function EditServiceForm({
   line,
+  unitLabel,
   onDone,
 }: {
   line: ClientServiceItem;
+  unitLabel: string | null;
   onDone: () => void;
 }) {
   const [state, formAction, pending] = useActionState(updateClientServiceAction, initialState);
+
+  // Controlled rather than defaultValue: all four feed the live total below,
+  // which has to move as they're typed or it isn't a preview of anything.
+  const [unitAmount, setUnitAmount] = useState(centsToInput(line.unitAmountCents));
+  const [quantity, setQuantity] = useState(String(line.quantity));
+  const [currency, setCurrency] = useState(line.currency);
+  const [interval, setInterval] = useState<BillingInterval>(line.interval);
 
   useEffect(() => {
     if (state.ok) onDone();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.ok]);
+
+  const preview = totalPreview(unitAmount, quantity, currency, interval);
 
   return (
     <form
@@ -599,21 +850,43 @@ function EditServiceForm({
           <AdminInput id={`label-${line.id}`} name="label" required defaultValue={line.label} />
         </div>
         <div>
-          <AdminLabel htmlFor={`amount-${line.id}`}>Amount</AdminLabel>
+          <AdminLabel htmlFor={`unitAmount-${line.id}`}>Unit price</AdminLabel>
           <AdminInput
-            id={`amount-${line.id}`}
-            name="amount"
+            id={`unitAmount-${line.id}`}
+            name="unitAmount"
             required
             inputMode="decimal"
-            defaultValue={centsToInput(line.amountCents)}
+            value={unitAmount}
+            onChange={(e) => setUnitAmount(e.target.value)}
           />
         </div>
+        <div>
+          <AdminLabel htmlFor={`quantity-${line.id}`}>
+            Qty{unitLabel ? ` (${unitLabel})` : ""}
+          </AdminLabel>
+          <AdminInput
+            id={`quantity-${line.id}`}
+            name="quantity"
+            type="number"
+            min={1}
+            max={MAX_QUANTITY}
+            step={1}
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <TotalPreview value={preview} />
+
+      <div className="grid gap-4 sm:grid-cols-4">
         <div>
           <AdminLabel htmlFor={`currency-${line.id}`}>Currency</AdminLabel>
           <select
             id={`currency-${line.id}`}
             name="currency"
-            defaultValue={line.currency}
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
             className={selectClass}
           >
             {CURRENCIES.map((c) => (
@@ -623,15 +896,13 @@ function EditServiceForm({
             ))}
           </select>
         </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-4">
         <div>
           <AdminLabel htmlFor={`interval-${line.id}`}>Billed</AdminLabel>
           <select
             id={`interval-${line.id}`}
             name="interval"
-            defaultValue={line.interval}
+            value={interval}
+            onChange={(e) => setInterval(e.target.value as BillingInterval)}
             className={selectClass}
           >
             {BILLING_INTERVALS.map((i) => (
@@ -666,6 +937,9 @@ function EditServiceForm({
             className={selectClass}
           />
         </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-4">
         <div>
           <AdminLabel htmlFor={`nextBillAt-${line.id}`}>Next bill</AdminLabel>
           <input
@@ -676,16 +950,15 @@ function EditServiceForm({
             className={selectClass}
           />
         </div>
-      </div>
-
-      <div>
-        <AdminLabel htmlFor={`notes-${line.id}`}>Note</AdminLabel>
-        <AdminTextarea
-          id={`notes-${line.id}`}
-          name="notes"
-          rows={2}
-          defaultValue={line.notes ?? ""}
-        />
+        <div className="sm:col-span-3">
+          <AdminLabel htmlFor={`notes-${line.id}`}>Note</AdminLabel>
+          <AdminTextarea
+            id={`notes-${line.id}`}
+            name="notes"
+            rows={2}
+            defaultValue={line.notes ?? ""}
+          />
+        </div>
       </div>
 
       {state.error && (
