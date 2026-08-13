@@ -381,6 +381,27 @@ body:has([data-theme="light"]) {
     color: var(--admin-fg);
   }
 
+  /* The letterhead is the one place on the document where the ink IS the design.
+     Browsers strip background colours when printing to save toner, which would
+     leave the white logo on white paper — i.e. nothing. `print-color-adjust:
+     exact` opts this one band out of that saving. It stays inside the @page
+     margin rather than full-bleeding: bleed needs a borderless printer and a
+     zero page margin, and a band that silently clips is worse than an inset one. */
+  .letterhead-band {
+    /* Kept in step with LETTERHEAD_BG in lib/brand/logo.ts — see the note there
+       on why this is #050505 and not pure black. */
+    background-color: #050505 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* On screen the body's padding is the card's inset. On paper the @page margin
+     already provides the left and right, so only the gap under the band is left
+     to draw here. */
+  .invoice-print .invoice-body {
+    padding: 24px 0 0;
+  }
+
   @page {
     margin: 16mm;
   }

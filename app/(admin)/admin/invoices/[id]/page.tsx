@@ -2,7 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { verifySession } from "@/lib/dal/session";
-import { getInvoice } from "@/lib/dal/invoices";
+import {
+  describeResyncFields,
+  draftResyncPreview,
+  getInvoice,
+} from "@/lib/dal/invoices";
 import { InvoiceDocument } from "@/components/admin/InvoiceDocument";
 import { InvoiceActions } from "@/components/admin/InvoiceActions";
 
@@ -30,6 +34,13 @@ export default async function InvoiceDetailPage({
   const invoice = await getInvoice(id);
   if (!invoice) notFound();
 
+  // Only a draft can drift — an issued invoice is frozen, so asking is wasted
+  // queries and the answer is always "nothing".
+  const drift =
+    invoice.status === "draft"
+      ? describeResyncFields((await draftResyncPreview(invoice.id)).fields)
+      : [];
+
   return (
     <div className="flex flex-col gap-6">
       <div className="no-print">
@@ -50,6 +61,7 @@ export default async function InvoiceDetailPage({
         totalCents={invoice.totalCents}
         currency={invoice.currency}
         dueDate={invoice.dueDate}
+        staleFields={drift}
       />
 
       <InvoiceDocument invoice={invoice} variant="admin" />

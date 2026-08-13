@@ -1,6 +1,7 @@
 import type { InvoiceDetail } from "@/lib/dal/invoices";
 import { formatMoney, formatTaxRate } from "@/lib/billing";
 import { formatDate } from "@/lib/utils";
+import { KPVE_LOGO_DATA_URI, LETTERHEAD_BG } from "@/lib/brand/logo";
 import { InvoiceStatusBadge, Money } from "./ui";
 
 /* ---------------------------------------------------------------------------
@@ -62,7 +63,30 @@ export function InvoiceDocument({
   }
 
   return (
-    <article className="invoice-print mx-auto w-full max-w-[820px] rounded-xl border border-[var(--admin-border)] bg-[var(--admin-surface)] p-8 text-[var(--admin-fg)] shadow-[var(--admin-shadow)] sm:p-10">
+    <article className="invoice-print mx-auto w-full max-w-[820px] overflow-hidden rounded-xl border border-[var(--admin-border)] bg-[var(--admin-surface)] text-[var(--admin-fg)] shadow-[var(--admin-shadow)]">
+      {/* Letterhead — the brand band, edge to edge. It sits OUTSIDE the body's
+          padding (hence the article's p-0 and the inner wrapper below) because a
+          letterhead that stops short of the paper edge reads as a picture of a
+          letterhead. `letterhead-band` is what the print stylesheet targets to
+          force the black through: browsers drop background colour by default
+          when printing, and a blank strip where the logo should be is worse
+          than no band at all. */}
+      <div
+        className="letterhead-band flex items-center justify-center py-7"
+        style={{ backgroundColor: LETTERHEAD_BG }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- a data URI has
+            nothing for next/image to optimise, and Image would break print. */}
+        <img
+          src={KPVE_LOGO_DATA_URI}
+          alt={invoice.sellerName}
+          width={56}
+          height={56}
+          className="h-14 w-14"
+        />
+      </div>
+
+      <div className="invoice-body p-8 sm:p-10">
       {warnings.length > 0 && (
         <div className="no-print mb-8 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
@@ -313,6 +337,7 @@ export function InvoiceDocument({
           </p>
         </footer>
       )}
+      </div>
     </article>
   );
 }

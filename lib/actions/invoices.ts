@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/dal/session";
 import {
   createInvoiceFromServices,
   deleteInvoice,
+  resyncDraftInvoice,
   setInvoiceStatus,
   updateInvoice,
 } from "@/lib/dal/invoices";
@@ -143,6 +144,26 @@ export async function updateInvoiceAction(
   }
 
   return { ok: true, error: null };
+}
+
+/* ---------------------------------------------------------------------------
+   Re-snapshot — pull the current org identity, client billing profile and tax
+   settings onto a draft. Draft only; the DAL enforces it.
+--------------------------------------------------------------------------- */
+
+export async function resyncInvoiceAction(formData: FormData): Promise<void> {
+  const invoiceId = String(formData.get("invoiceId") ?? "");
+  if (!invoiceId) return;
+
+  try {
+    await requireSession();
+    const { clientId } = await resyncDraftInvoice(invoiceId);
+    revalidatePath(`/admin/invoices/${invoiceId}`);
+    revalidatePath("/admin/invoices");
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[resyncInvoiceAction]", error);
+  }
 }
 
 export async function deleteInvoiceAction(formData: FormData): Promise<void> {

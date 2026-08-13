@@ -1,5 +1,6 @@
 import {
   Document,
+  Image,
   Page,
   View,
   Text,
@@ -10,6 +11,7 @@ import {
 import type { InvoiceDetail } from "@/lib/dal/invoices";
 import { formatMoney, formatTaxRate } from "@/lib/billing";
 import { formatDate } from "@/lib/utils";
+import { KPVE_LOGO_DATA_URI, LETTERHEAD_BG } from "@/lib/brand/logo";
 
 /* ---------------------------------------------------------------------------
    The invoice as a real, generated PDF file.
@@ -43,13 +45,27 @@ const COLOR = {
 
 const styles = StyleSheet.create({
   page: {
-    paddingVertical: 44,
+    paddingTop: 34,
+    paddingBottom: 44,
     paddingHorizontal: 46,
     fontFamily: "Helvetica",
     fontSize: 9.5,
     color: COLOR.body,
     lineHeight: 1.45,
   },
+
+  /* Letterhead — the brand band, spanning the content width at the top of page
+     one. Inset by the page's own horizontal padding rather than bleeding to the
+     paper edge, which keeps it identical to the HTML sheet and safe on a printer
+     that cannot print borderless. */
+  letterhead: {
+    backgroundColor: LETTERHEAD_BG,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    marginBottom: 24,
+  },
+  letterheadMark: { width: 44, height: 44 },
 
   /* Header */
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
@@ -212,7 +228,15 @@ function InvoicePdf({ invoice }: { invoice: InvoiceDetail }) {
       subject={isTaxInvoice ? "Tax invoice" : "Invoice"}
     >
       <Page size="A4" style={styles.page}>
-        {/* Header — seller letterhead left, document identity right. */}
+        {/* Letterhead — page one only, which is what makes it a letterhead. */}
+        <View style={styles.letterhead}>
+          {/* eslint-disable-next-line jsx-a11y/alt-text -- this is react-pdf's
+              Image, which draws into a PDF and has no alt prop; the seller's
+              name is set as the document's author and title metadata instead. */}
+          <Image src={KPVE_LOGO_DATA_URI} style={styles.letterheadMark} />
+        </View>
+
+        {/* Header — seller identity left, document identity right. */}
         <View style={styles.headerRow}>
           <View style={{ maxWidth: 260 }}>
             <Text style={styles.sellerName}>{invoice.sellerName}</Text>

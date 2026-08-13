@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 
 import {
   deleteInvoiceAction,
+  resyncInvoiceAction,
   setInvoiceStatusAction,
 } from "@/lib/actions/invoices";
 import type { InvoiceStatus } from "@/lib/db/schema";
@@ -33,6 +34,7 @@ export function InvoiceActions({
   totalCents,
   currency,
   dueDate,
+  staleFields = [],
 }: {
   status: InvoiceStatus;
   invoiceId: string;
@@ -42,6 +44,12 @@ export function InvoiceActions({
   totalCents: number;
   currency: string;
   dueDate: Date | null;
+  /**
+   * Plain-English names of the things that have changed in settings since this
+   * draft was snapshotted — empty when the draft is current, and always empty
+   * for an issued invoice, which is frozen by design.
+   */
+  staleFields?: string[];
 }) {
   const [copied, setCopied] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -80,8 +88,32 @@ export function InvoiceActions({
       `&body=${encodeURIComponent(body)}`;
   }
 
+  const isStale = status === "draft" && staleFields.length > 0;
+
   return (
     <div className="no-print flex flex-col gap-3">
+      {/* The invoice is a snapshot taken when it was created, so settings saved
+          afterwards are simply not on it. Rather than leave staff to work that
+          out from an invoice that inexplicably says nothing about GST, name what
+          moved and offer the one-click fix. Send does this automatically too —
+          this is for seeing the corrected draft before sending it. */}
+      {isStale && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--admin-accent)]/40 bg-[var(--admin-surface-2)] px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-[var(--admin-fg)]">
+              Settings have changed since this draft was created
+            </p>
+            <p className="mt-0.5 text-sm text-[var(--admin-fg-muted)]">
+              Not yet on this invoice: {staleFields.join(", ")}.
+            </p>
+          </div>
+          <form action={resyncInvoiceAction} className="inline-flex shrink-0">
+            <input type="hidden" name="invoiceId" value={invoiceId} />
+            <AdminButton type="submit">Update from settings</AdminButton>
+          </form>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         {/* Status-driven primary actions. */}
         {status === "draft" && (

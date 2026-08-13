@@ -184,6 +184,21 @@ function toDateString(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/**
+ * A blank identity field is an ABSENT identity field, and it must reach the
+ * database as null.
+ *
+ * Forms post "" for an untouched input, so an ABN nobody filled in arrives as
+ * an empty string. Stored raw, `""` is truthy enough for a careless check and
+ * falsy in the renderers, which is exactly the kind of split that produces an
+ * invoice printing the bare word "ABN" with nothing after it. Normalising on
+ * the way in means every reader downstream can just ask `if (abn)`.
+ */
+function blankToNull(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
 /* ---------------------------------------------------------------------------
    Create — snapshot the client's selected lines into an issued document.
 --------------------------------------------------------------------------- */
@@ -309,13 +324,13 @@ export async function createInvoiceFromServices(input: {
             taxRateBps: breakdown.taxRateBps,
             taxMode: breakdown.mode,
             sellerName: settings.legalName,
-            sellerAbn: settings.abn,
-            sellerAddress: settings.address,
-            sellerEmail: settings.email,
+            sellerAbn: blankToNull(settings.abn),
+            sellerAddress: blankToNull(settings.address),
+            sellerEmail: blankToNull(settings.email),
             billToName,
-            billToAbn: client.billingAbn,
-            billToEmail,
-            billToAddress: client.billingAddress,
+            billToAbn: blankToNull(client.billingAbn),
+            billToEmail: blankToNull(billToEmail),
+            billToAddress: blankToNull(client.billingAddress),
             publicToken,
             poNumber: input.poNumber ?? null,
             notes: input.notes ?? null,
@@ -596,12 +611,30 @@ export async function setInvoiceStatus(
   if (current.status === status) return { clientId: current.clientId };
   if (!ALLOWED[current.status].includes(status)) throw new Error("BAD_TRANSITION");
 
+  // Sending is the moment a draft stops being a working copy and becomes the
+  // document the client holds — so it is the last and best moment to make sure
+  // the identity and tax treatment on it are the current ones. Without this, an
+  // ABN or a GST registration added after the draft was raised would never
+  // reach the invoice, because after this line it can never be edited again.
+  let totalCents = current.totalCents;
+  if (current.status === "draft" && status === "sent") {
+    const resync = await applyDraftResync(id, staff.id);
+    if (resync.changed) {
+      const [fresh] = await db
+        .select({ totalCents: invoices.totalCents })
+        .from(invoices)
+        .where(eq(invoices.id, id))
+        .limit(1);
+      if (fresh) totalCents = fresh.totalCents;
+    }
+  }
+
   const now = new Date();
   const set: Record<string, unknown> = { status, updatedAt: now };
   if (status === "sent") set.sentAt = now;
   if (status === "paid") {
     set.paidAt = now;
-    set.amountPaidCents = current.totalCents;
+    set.amountPaidCents = totalCents;
   }
   if (status === "void") set.voidedAt = now;
 
@@ -642,6 +675,209 @@ export async function updateInvoice(
 
   await db.update(invoices).set(set).where(eq(invoices.id, id));
   return { clientId: current.clientId };
+}
+
+/* ---------------------------------------------------------------------------
+   Re-snapshot a draft — the escape hatch for rule 1.
+
+   An issued invoice is frozen, and rightly so. A DRAFT is not issued: it is a
+   document being prepared, and it was snapshotted the instant it was created.
+   So the very common sequence
+
+     create the first invoice → notice it says nothing about GST →
+     go to /admin/settings, tick "GST registered", paste the ABN → come back
+
+   leaves a draft still carrying the old, empty identity, because the snapshot
+   happened before the settings existed. The document is correct about a moment
+   nobody wants a record of.
+
+   This re-reads the org identity, the client's billing profile and the tax
+   settings and re-derives the header and the totals from the lines already on
+   the invoice. Line labels, amounts, periods and provisioned items are NOT
+   touched — those came from the service rows and are the invoice's actual
+   content; only the identity and the tax treatment wrapped around them move.
+
+   Draft only, enforced here, for the same reason updateInvoice is.
+--------------------------------------------------------------------------- */
+
+/** What a re-snapshot did, so the UI can say "nothing to change" honestly. */
+export type ResyncResult = {
+  clientId: string;
+  changed: boolean;
+  /** Column names that moved — the activity log's record of the edit. */
+  fields: string[];
+};
+
+export async function resyncDraftInvoice(id: string): Promise<ResyncResult> {
+  const staff = await requireSession();
+  return applyDraftResync(id, staff.id);
+}
+
+/**
+ * What a re-snapshot WOULD change, without changing it.
+ *
+ * The invoice page uses this to say "your ABN and GST setting aren't on this
+ * draft yet" instead of leaving staff to notice the absence themselves. It runs
+ * the identical comparison the write path runs — deliberately the same code and
+ * not a second, drifting opinion about what "out of date" means. A non-draft is
+ * frozen and therefore never stale, so it reports nothing rather than throwing.
+ */
+export async function draftResyncPreview(
+  id: string,
+): Promise<{ changed: boolean; fields: string[] }> {
+  await requireSession();
+  try {
+    const { changed, fields } = await applyDraftResync(id, null, { dryRun: true });
+    return { changed, fields };
+  } catch (error) {
+    if (error instanceof Error && error.message === "NOT_DRAFT") {
+      return { changed: false, fields: [] };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The session-free body, so `setInvoiceStatus` can reuse it inside a flow that
+ * has already authenticated rather than re-checking on the way past.
+ *
+ * `staffId` is null only on the dry run, which writes nothing and so has no
+ * activity row to attribute.
+ */
+async function applyDraftResync(
+  id: string,
+  staffId: string | null,
+  opts: { dryRun?: boolean } = {},
+): Promise<ResyncResult> {
+  const [current] = await db
+    .select({
+      status: invoices.status,
+      clientId: invoices.clientId,
+      number: invoices.number,
+      subtotalCents: invoices.subtotalCents,
+      taxCents: invoices.taxCents,
+      totalCents: invoices.totalCents,
+      taxRateBps: invoices.taxRateBps,
+      taxMode: invoices.taxMode,
+      sellerName: invoices.sellerName,
+      sellerAbn: invoices.sellerAbn,
+      sellerAddress: invoices.sellerAddress,
+      sellerEmail: invoices.sellerEmail,
+      billToName: invoices.billToName,
+      billToAbn: invoices.billToAbn,
+      billToEmail: invoices.billToEmail,
+      billToAddress: invoices.billToAddress,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, id))
+    .limit(1);
+  if (!current) throw new Error("NOT_FOUND");
+  if (current.status !== "draft") throw new Error("NOT_DRAFT");
+
+  const [client] = await db
+    .select({
+      name: clients.name,
+      email: clients.email,
+      billingName: clients.billingName,
+      billingAbn: clients.billingAbn,
+      billingEmail: clients.billingEmail,
+      billingAddress: clients.billingAddress,
+    })
+    .from(clients)
+    .where(eq(clients.id, current.clientId))
+    .limit(1);
+  if (!client) throw new Error("NOT_FOUND");
+
+  // Tax is re-derived from the amounts ALREADY on the invoice, not from the
+  // live service rows: a price rise since the draft was raised is a different
+  // decision from "this business is now registered for GST", and only the
+  // second one belongs in a re-snapshot.
+  const lineRows = await db
+    .select({ amountCents: invoiceLines.amountCents })
+    .from(invoiceLines)
+    .where(eq(invoiceLines.invoiceId, id));
+
+  const settings = await getOrgSettings();
+  const breakdown = computeTax(
+    lineRows.map((l) => l.amountCents),
+    await getTaxSettings(),
+  );
+
+  const next = {
+    subtotalCents: breakdown.subtotalCents,
+    taxCents: breakdown.taxCents,
+    totalCents: breakdown.totalCents,
+    taxRateBps: breakdown.taxRateBps,
+    taxMode: breakdown.mode,
+    sellerName: settings.legalName,
+    sellerAbn: blankToNull(settings.abn),
+    sellerAddress: blankToNull(settings.address),
+    sellerEmail: blankToNull(settings.email),
+    billToName: client.billingName || client.name,
+    billToAbn: blankToNull(client.billingAbn),
+    billToEmail: blankToNull(client.billingEmail || client.email),
+    billToAddress: blankToNull(client.billingAddress),
+  } as const;
+
+  // Compare before writing so a no-op re-snapshot doesn't bump updated_at or
+  // add a meaningless line to the activity log every time someone clicks it.
+  const fields = (Object.keys(next) as (keyof typeof next)[]).filter(
+    (key) => next[key] !== current[key],
+  );
+  if (fields.length === 0 || opts.dryRun) {
+    return {
+      clientId: current.clientId,
+      changed: fields.length > 0,
+      fields,
+    };
+  }
+
+  await db
+    .update(invoices)
+    .set({ ...next, updatedAt: new Date() })
+    .where(eq(invoices.id, id));
+
+  await logActivity({
+    actorType: "staff",
+    actorId: staffId,
+    entityType: "invoice",
+    entityId: id,
+    action: "invoice.resynced",
+    metadata: { number: current.number, changed: fields },
+  });
+
+  return { clientId: current.clientId, changed: true, fields };
+}
+
+/**
+ * Column names → what a person calls them. Several columns collapse onto one
+ * label on purpose: "GST treatment" moving is one fact, not the four numeric
+ * columns that carry it, and listing all four would read like a bug report.
+ */
+const RESYNC_LABELS: Record<string, string> = {
+  subtotalCents: "GST treatment",
+  taxCents: "GST treatment",
+  totalCents: "GST treatment",
+  taxRateBps: "GST treatment",
+  taxMode: "GST treatment",
+  sellerName: "your legal name",
+  sellerAbn: "your ABN",
+  sellerAddress: "your business address",
+  sellerEmail: "your email",
+  billToName: "the client's billing name",
+  billToAbn: "the client's ABN",
+  billToEmail: "the client's billing email",
+  billToAddress: "the client's billing address",
+};
+
+/** The drift, deduplicated and in plain words — for the notice on the page. */
+export function describeResyncFields(fields: string[]): string[] {
+  const seen = new Set<string>();
+  for (const field of fields) {
+    const label = RESYNC_LABELS[field];
+    if (label) seen.add(label);
+  }
+  return [...seen];
 }
 
 export async function deleteInvoice(id: string): Promise<{ clientId: string }> {
