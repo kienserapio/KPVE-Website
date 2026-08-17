@@ -124,15 +124,24 @@ export class StripePaymentProvider implements PaymentProvider {
   constructor(private readonly secretKey: string) {}
 
   async createCheckout(request: CheckoutRequest): Promise<CheckoutSession> {
+    // An invoice is a fixed amount due, so it is ALWAYS a single charge — the
+    // recurrence of the services behind it is already priced into the total.
     const recurring =
-      request.interval === "one_off" ? undefined : STRIPE_RECURRING[request.interval];
+      request.invoiceId || request.interval === "one_off"
+        ? undefined
+        : STRIPE_RECURRING[request.interval];
 
     // Our ids travel with the session so the webhook can find the billing line
     // without trusting anything in the URL. For a subscription they go on the
     // subscription too — renewal invoices arrive months later and reference
     // only that, not the checkout that started it.
+    //
+    // `kpve_invoice_id` is deliberately not `invoice_id`: Stripe's own invoice
+    // objects carry ids of that name, and a webhook handler reading the wrong
+    // one would settle the wrong document.
     const metadata = {
-      client_service_id: request.clientServiceId,
+      client_service_id: request.clientServiceId ?? undefined,
+      kpve_invoice_id: request.invoiceId ?? undefined,
       client_id: request.clientId,
     };
 
@@ -140,7 +149,7 @@ export class StripePaymentProvider implements PaymentProvider {
       mode: recurring ? "subscription" : "payment",
       success_url: request.successUrl,
       cancel_url: request.cancelUrl,
-      client_reference_id: request.clientServiceId,
+      client_reference_id: request.clientServiceId ?? request.invoiceId,
       metadata,
       line_items: [
         {
@@ -165,18 +174,44 @@ export class StripePaymentProvider implements PaymentProvider {
     // the second service they buy attaches to the same customer record. The
     // prefix check matters: a client billed during simulated mode may carry an
     // id from another provider, and Stripe would reject it as unknown.
-    if (request.customerId?.startsWith("cus_")) {
+    const reusingCustomer = Boolean(request.customerId?.startsWith("cus_"));
+    if (reusingCustomer) {
       body.customer = request.customerId;
     } else {
       body.customer_email = request.clientEmail;
       if (!recurring) body.customer_creation = "always";
     }
 
-    const session = await stripeRequest<StripeCheckoutSession>(
-      "/checkout/sessions",
-      body,
-      this.secretKey,
-    );
+    let replacedCustomer = false;
+    let session: StripeCheckoutSession;
+    try {
+      session = await stripeRequest<StripeCheckoutSession>(
+        "/checkout/sessions",
+        body,
+        this.secretKey,
+      );
+    } catch (error) {
+      // The one recoverable failure: the customer we referenced isn't in this
+      // Stripe account. That is exactly what a test-mode `cus_…` looks like the
+      // day the live keys go in, and it would otherwise block every payment for
+      // that client with an error nobody could act on. Retry once as a new
+      // customer and tell the caller to forget the old id.
+      if (!reusingCustomer || !isMissingCustomer(error)) throw error;
+
+      console.warn(
+        "[stripe] stored customer id was rejected — creating a new customer for this checkout",
+      );
+      delete body.customer;
+      body.customer_email = request.clientEmail;
+      if (!recurring) body.customer_creation = "always";
+
+      session = await stripeRequest<StripeCheckoutSession>(
+        "/checkout/sessions",
+        body,
+        this.secretKey,
+      );
+      replacedCustomer = true;
+    }
 
     if (!session.url) {
       throw new PaymentProviderError("Stripe created the session but returned no URL.");
@@ -187,9 +222,19 @@ export class StripePaymentProvider implements PaymentProvider {
       ref: session.id,
       url: session.url,
       customerId: session.customer,
+      replacedCustomer,
       expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
     };
   }
+}
+
+/** Stripe's "No such customer" — `resource_missing` on the `customer` param. */
+function isMissingCustomer(error: unknown): boolean {
+  if (!(error instanceof PaymentProviderError)) return false;
+  const detail = error.detail as { code?: string; param?: string } | undefined;
+  if (detail?.code === "resource_missing" && detail?.param === "customer") return true;
+  // Older shapes don't always carry `param`; the message always names it.
+  return /no such customer/i.test(error.message);
 }
 
 /* ---------------------------------------------------------------------------
@@ -302,6 +347,22 @@ function extractClientServiceId(object: Record<string, unknown>): string | null 
   return str(object.client_reference_id);
 }
 
+/**
+ * Our invoice id, when the session was raised to pay a KPVE invoice rather than
+ * to start a service. Only ever read from OUR key — `object.invoice` is Stripe's
+ * own invoice, which is a different thing entirely.
+ */
+function extractInvoiceId(object: Record<string, unknown>): string | null {
+  const direct = object.metadata as Record<string, unknown> | undefined;
+  const fromMetadata = str(direct?.kpve_invoice_id);
+  if (fromMetadata) return fromMetadata;
+
+  const paymentIntent = object.payment_intent as
+    | { metadata?: Record<string, unknown> }
+    | undefined;
+  return str(paymentIntent?.metadata?.kpve_invoice_id);
+}
+
 export type NormalizedStripeEvent =
   | { kind: "succeeded"; payment: PaymentEvent }
   | { kind: "failed"; clientServiceId: string; reason: string; providerRef: string }
@@ -311,6 +372,7 @@ export type NormalizedStripeEvent =
 export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent {
   const object = event.data.object;
   const clientServiceId = extractClientServiceId(object);
+  const invoiceId = extractInvoiceId(object);
 
   switch (event.type) {
     case "checkout.session.completed": {
@@ -320,7 +382,11 @@ export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent 
       if (str(object.payment_status) !== "paid") {
         return { kind: "ignored", reason: "session completed but not paid" };
       }
-      if (!clientServiceId) return { kind: "ignored", reason: "no client_service_id" };
+      // An invoice checkout carries our invoice id and nothing else; a service
+      // checkout carries the line. Neither means the event isn't ours to act on.
+      if (!clientServiceId && !invoiceId) {
+        return { kind: "ignored", reason: "no client_service_id or invoice id" };
+      }
 
       return {
         kind: "succeeded",
@@ -328,6 +394,7 @@ export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent 
           provider: "stripe",
           providerRef: event.id,
           clientServiceId,
+          invoiceId,
           amountCents: num(object.amount_total) ?? 0,
           currency: (str(object.currency) ?? "aud").toUpperCase(),
           paidAt: new Date(event.created * 1000),

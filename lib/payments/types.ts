@@ -13,8 +13,20 @@ import type { BillingInterval } from "@/lib/db/schema";
 export type ProviderName = "mock" | "stripe";
 
 export type CheckoutRequest = {
-  /** Our id for the billing line. Round-trips through the provider's metadata. */
-  clientServiceId: string;
+  /**
+   * What is being paid for. Exactly one of these is set, and whichever it is
+   * round-trips through the provider's metadata so the webhook can find its way
+   * home without trusting anything in the URL.
+   *
+   * A SERVICE checkout starts the ongoing arrangement — recurring intervals
+   * become a real subscription over at the provider. An INVOICE checkout is
+   * always a single charge for the invoice total, whatever the underlying lines
+   * recur at: an invoice is a fixed amount due, and billing two years up front
+   * then handing over a monthly subscription link would collect $11 against a
+   * $1,056 document.
+   */
+  clientServiceId?: string | null;
+  invoiceId?: string | null;
   clientId: string;
   label: string;
   /** The whole line's price — unitAmountCents × quantity. Kept for the mock. */
@@ -40,6 +52,14 @@ export type CheckoutSession = {
   url: string;
   /** Set when the provider created or matched a customer record. */
   customerId?: string | null;
+  /**
+   * True when the customer id we sent was rejected and the session was created
+   * against a fresh customer instead. This is the test → live switch: a
+   * `cus_…` minted in test mode does not exist in live mode, is indistinguishable
+   * by prefix, and would fail every checkout for that client until someone
+   * cleared it by hand. The caller overwrites the stored id when this is set.
+   */
+  replacedCustomer?: boolean;
   /** When the link stops working, if the provider says. */
   expiresAt?: Date | null;
 };
@@ -62,7 +82,9 @@ export type PaymentEvent = {
   provider: ProviderName;
   /** Unique per event at the provider. The idempotency key for the whole flow. */
   providerRef: string;
-  clientServiceId: string;
+  /** Which of ours this settles — the mirror of CheckoutRequest above. */
+  clientServiceId?: string | null;
+  invoiceId?: string | null;
   amountCents: number;
   currency: string;
   paidAt: Date;

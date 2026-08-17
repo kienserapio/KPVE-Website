@@ -15,9 +15,11 @@ import {
   type InvoiceStatus,
 } from "@/lib/db/schema";
 import {
-  addInterval,
+  addIntervals,
   computeTax,
+  cyclesForDuration,
   DEFAULT_CURRENCY,
+  periodTotalCents,
   type TaxBreakdown,
 } from "@/lib/billing";
 import { requireSession } from "./session";
@@ -59,6 +61,8 @@ export type InvoiceLineItem = {
   description: string | null;
   unitAmountCents: number;
   quantity: number;
+  /** Billing cycles this line covers — 24 on a two-year monthly line. */
+  periods: number;
   amountCents: number;
   /** Provisioned items, newline-separated as snapshotted at issue. */
   details: string | null;
@@ -91,6 +95,11 @@ export type InvoiceDetail = {
   issueDate: Date;
   dueDate: Date | null;
   currency: string;
+  /** Months billed up front, or null for the default single cycle per line. */
+  coverMonths: number | null;
+  /** The span every line together covers — earliest start, latest end. */
+  coverStart: Date | null;
+  coverEnd: Date | null;
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
@@ -114,12 +123,17 @@ export type InvoiceDetail = {
   createdAt: Date;
   lines: InvoiceLineItem[];
   /**
-   * The client's "Pay now" target. Only set when the invoice is a single
-   * billing line that already has a live payment link — the common case of an
-   * invoice raised for one recurring service. Multi-line invoices are paid by
-   * EFT (the bank block) or by minting links per line on the client page.
+   * Whether this invoice can be paid by card at all — total above zero, still
+   * owing, and issued. The client's copy shows a "Pay now" button when it is
+   * true; the session itself is minted on the click (see payInvoiceAction),
+   * because a Checkout Session expires in 24 hours and an invoice does not.
    */
-  payUrl: string | null;
+  payable: boolean;
+  /**
+   * The most recently minted checkout for this invoice, kept for reference and
+   * for the activity trail. NOT the button's target — see `payable`.
+   */
+  checkoutUrl: string | null;
   /** EFT block etc. — the live org details, for the "how to pay" footer only. */
   bankDetails: {
     bankName: string | null;
@@ -160,17 +174,19 @@ async function highestCounter(prefix: string, year: number): Promise<number> {
 }
 
 /* ---------------------------------------------------------------------------
-   Period for a line — "1 Aug – 31 Aug".
+   Period for a line — "1 Aug – 31 Aug", or "1 Aug 2026 – 31 Jul 2028".
 
-   A recurring line's invoice covers one cycle from the issue date. A one-off
-   covers nothing (there is no period to a single fee), so both dates stay null.
+   A recurring line covers `periods` cycles from the issue date; the default is
+   one, and a two-year invoice on a monthly line is 24. A one-off covers nothing
+   (there is no period to a single fee), so both dates stay null.
 --------------------------------------------------------------------------- */
 
 function linePeriod(
   issueDate: Date,
   interval: BillingInterval,
+  periods: number,
 ): { start: string | null; end: string | null } {
-  const next = addInterval(issueDate, interval);
+  const next = addIntervals(issueDate, interval, periods);
   if (!next) return { start: null, end: null };
   // End the day before the next cycle begins, so periods tile without overlap.
   const end = new Date(next);
@@ -206,6 +222,8 @@ function blankToNull(value: string | null | undefined): string | null {
 export async function createInvoiceFromServices(input: {
   clientId: string;
   clientServiceIds: string[];
+  /** Months to bill up front. Undefined is the default: one cycle per line. */
+  coverMonths?: number;
   issueDate?: Date;
   dueDate?: Date;
   poNumber?: string;
@@ -276,10 +294,29 @@ export async function createInvoiceFromServices(input: {
     itemsByLine.set(row.clientServiceId, list);
   }
 
+  // Duration applied ONCE, here, and then frozen onto each line. Everything
+  // downstream — the tax, the totals, the printed document, the amount Stripe
+  // charges — reads the multiplied line, so there is no second place that could
+  // hold a different opinion about what two years costs.
+  const coverMonths = input.coverMonths ?? null;
+  const priced = lines.map((line) => {
+    const periods = cyclesForDuration(line.interval, coverMonths);
+    // Defensive: a line predating the quantity backfill reads as 1 × the total.
+    const unitAmountCents = line.unitAmountCents || line.amountCents;
+    const quantity = line.quantity || 1;
+    return {
+      ...line,
+      periods,
+      unitAmountCents,
+      quantity,
+      amountCents: periodTotalCents(unitAmountCents, quantity, periods),
+    };
+  });
+
   const settings = await getOrgSettings();
   const taxSettings = await getTaxSettings();
   const breakdown = computeTax(
-    lines.map((l) => l.amountCents),
+    priced.map((l) => l.amountCents),
     taxSettings,
   );
 
@@ -318,6 +355,7 @@ export async function createInvoiceFromServices(input: {
             issueDate: toDateString(issueDate),
             dueDate: toDateString(dueDate),
             currency,
+            coverMonths,
             subtotalCents: breakdown.subtotalCents,
             taxCents: breakdown.taxCents,
             totalCents: breakdown.totalCents,
@@ -339,8 +377,8 @@ export async function createInvoiceFromServices(input: {
           .returning({ id: invoices.id });
 
         await tx.insert(invoiceLines).values(
-          lines.map((line, index) => {
-            const period = linePeriod(issueDate, line.interval);
+          priced.map((line, index) => {
+            const period = linePeriod(issueDate, line.interval, line.periods);
             const items = itemsByLine.get(line.id) ?? [];
             return {
               invoiceId: invoice.id,
@@ -349,6 +387,7 @@ export async function createInvoiceFromServices(input: {
               description: line.notes,
               unitAmountCents: line.unitAmountCents,
               quantity: line.quantity,
+              periods: line.periods,
               amountCents: line.amountCents,
               details: items.length ? items.join("\n") : null,
               periodStart: period.start,
@@ -367,7 +406,13 @@ export async function createInvoiceFromServices(input: {
         entityType: "invoice",
         entityId: invoiceId,
         action: "invoice.created",
-        metadata: { number, clientId: client.id, totalCents: breakdown.totalCents, currency },
+        metadata: {
+          number,
+          clientId: client.id,
+          totalCents: breakdown.totalCents,
+          currency,
+          coverMonths,
+        },
       });
 
       return { id: invoiceId, number };
@@ -466,6 +511,7 @@ async function loadInvoice(
       issueDate: invoices.issueDate,
       dueDate: invoices.dueDate,
       currency: invoices.currency,
+      coverMonths: invoices.coverMonths,
       subtotalCents: invoices.subtotalCents,
       taxCents: invoices.taxCents,
       totalCents: invoices.totalCents,
@@ -481,6 +527,7 @@ async function loadInvoice(
       billToEmail: invoices.billToEmail,
       billToAddress: invoices.billToAddress,
       publicToken: invoices.publicToken,
+      checkoutUrl: invoices.checkoutUrl,
       notes: invoices.notes,
       poNumber: invoices.poNumber,
       sentAt: invoices.sentAt,
@@ -503,6 +550,7 @@ async function loadInvoice(
       description: invoiceLines.description,
       unitAmountCents: invoiceLines.unitAmountCents,
       quantity: invoiceLines.quantity,
+      periods: invoiceLines.periods,
       amountCents: invoiceLines.amountCents,
       details: invoiceLines.details,
       periodStart: invoiceLines.periodStart,
@@ -518,30 +566,31 @@ async function loadInvoice(
   // already-sent, still-unpaid invoice.
   const settings = await getOrgSettings();
 
-  // Pay-now link: only when the whole invoice is one line that still has a live
-  // checkout URL, and only while it's unpaid. Paid/void invoices show no button.
-  let payUrl: string | null = null;
-  const soleServiceId =
-    lineRows.length === 1 ? lineRows[0].clientServiceId : null;
-  if (soleServiceId && (row.status === "sent" || row.status === "draft")) {
-    const [line] = await db
-      .select({ checkoutUrl: clientServices.checkoutUrl })
-      .from(clientServices)
-      .where(eq(clientServices.id, soleServiceId))
-      .limit(1);
-    payUrl = line?.checkoutUrl ?? null;
-  }
+  const lines = lineRows.map((l) => ({
+    ...l,
+    periodStart: l.periodStart ? dateOnly(l.periodStart) : null,
+    periodEnd: l.periodEnd ? dateOnly(l.periodEnd) : null,
+  }));
+
+  // The span the whole document covers, for the header. Derived from the lines
+  // rather than from cover_months so it stays true for an invoice raised before
+  // durations existed, and for one whose lines run on different cycles.
+  const starts = lines.map((l) => l.periodStart).filter((d): d is Date => d !== null);
+  const ends = lines.map((l) => l.periodEnd).filter((d): d is Date => d !== null);
+
+  // Card payment is offered on an ISSUED invoice with something still owing.
+  // A draft has no client link yet; a void one is a closed record.
+  const payable =
+    row.status === "sent" && row.totalCents - row.amountPaidCents > 0;
 
   return {
     ...row,
     issueDate: dateOnly(row.issueDate),
     dueDate: row.dueDate ? dateOnly(row.dueDate) : null,
-    payUrl,
-    lines: lineRows.map((l) => ({
-      ...l,
-      periodStart: l.periodStart ? dateOnly(l.periodStart) : null,
-      periodEnd: l.periodEnd ? dateOnly(l.periodEnd) : null,
-    })),
+    coverStart: starts.length ? new Date(Math.min(...starts.map((d) => d.getTime()))) : null,
+    coverEnd: ends.length ? new Date(Math.max(...ends.map((d) => d.getTime()))) : null,
+    payable,
+    lines,
     bankDetails: {
       bankName: settings.bankName,
       bsb: settings.bsb,
@@ -674,6 +723,121 @@ export async function updateInvoice(
   if (patch.notes !== undefined) set.notes = patch.notes || null;
 
   await db.update(invoices).set(set).where(eq(invoices.id, id));
+  return { clientId: current.clientId };
+}
+
+/* ---------------------------------------------------------------------------
+   Re-price a draft for a different duration.
+
+   "Actually, make it two years" arrives after the draft exists more often than
+   before it, and deleting and rebuilding the invoice to answer it would burn an
+   invoice number for a question. So a DRAFT can change duration — and only a
+   draft, for the same reason it is the only editable state at all.
+
+   Every line is re-derived from its OWN unit price and quantity, never from the
+   amount already on it: multiplying the stored total would compound, so
+   1 → 2 years → 1 year would leave the line at twice the right price. The
+   interval comes from the billing line the invoice line points at; a line whose
+   service has since been deleted keeps the periods it has, because there is no
+   longer anything that says what a cycle of it means.
+--------------------------------------------------------------------------- */
+
+export async function setInvoiceDuration(
+  id: string,
+  coverMonths: number | null,
+): Promise<{ clientId: string }> {
+  const staff = await requireSession();
+
+  const [current] = await db
+    .select({
+      status: invoices.status,
+      clientId: invoices.clientId,
+      number: invoices.number,
+      issueDate: invoices.issueDate,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, id))
+    .limit(1);
+  if (!current) throw new Error("NOT_FOUND");
+  if (current.status !== "draft") throw new Error("NOT_DRAFT");
+
+  const lineRows = await db
+    .select({
+      id: invoiceLines.id,
+      clientServiceId: invoiceLines.clientServiceId,
+      unitAmountCents: invoiceLines.unitAmountCents,
+      quantity: invoiceLines.quantity,
+      periods: invoiceLines.periods,
+      amountCents: invoiceLines.amountCents,
+      interval: clientServices.interval,
+    })
+    .from(invoiceLines)
+    .leftJoin(clientServices, eq(invoiceLines.clientServiceId, clientServices.id))
+    .where(eq(invoiceLines.invoiceId, id));
+  if (lineRows.length === 0) throw new Error("NO_LINES");
+
+  const issueDate = dateOnly(current.issueDate);
+
+  const repriced = lineRows.map((line) => {
+    // No interval to reason about (the service is gone) — leave it alone.
+    const periods = line.interval ? cyclesForDuration(line.interval, coverMonths) : line.periods;
+    const unit = line.unitAmountCents || line.amountCents;
+    const quantity = line.quantity || 1;
+    const period = line.interval
+      ? linePeriod(issueDate, line.interval, periods)
+      : { start: null, end: null };
+    return {
+      id: line.id,
+      periods,
+      amountCents: periodTotalCents(unit, quantity, periods),
+      periodStart: period.start,
+      periodEnd: period.end,
+      untouched: !line.interval,
+    };
+  });
+
+  const breakdown = computeTax(
+    repriced.map((l) => l.amountCents),
+    await getTaxSettings(),
+  );
+
+  await db.transaction(async (tx) => {
+    for (const line of repriced) {
+      if (line.untouched) continue;
+      await tx
+        .update(invoiceLines)
+        .set({
+          periods: line.periods,
+          amountCents: line.amountCents,
+          periodStart: line.periodStart,
+          periodEnd: line.periodEnd,
+        })
+        .where(eq(invoiceLines.id, line.id));
+    }
+
+    await tx
+      .update(invoices)
+      .set({
+        coverMonths,
+        subtotalCents: breakdown.subtotalCents,
+        taxCents: breakdown.taxCents,
+        totalCents: breakdown.totalCents,
+        taxRateBps: breakdown.taxRateBps,
+        taxMode: breakdown.mode,
+        updatedAt: new Date(),
+      })
+      .where(eq(invoices.id, id));
+  });
+
+  await logActivity({
+    actorType: "staff",
+    actorId: staff.id,
+    entityType: "invoice",
+    entityId: id,
+    action: "invoice.duration_changed",
+    metadata: { number: current.number, coverMonths, totalCents: breakdown.totalCents },
+  });
+
   return { clientId: current.clientId };
 }
 

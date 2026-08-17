@@ -8,11 +8,13 @@ import {
   createInvoiceFromServices,
   deleteInvoice,
   resyncDraftInvoice,
+  setInvoiceDuration,
   setInvoiceStatus,
   updateInvoice,
 } from "@/lib/dal/invoices";
 import {
   createInvoiceSchema,
+  setInvoiceDurationSchema,
   setInvoiceStatusSchema,
   updateInvoiceSchema,
 } from "@/lib/validation";
@@ -55,6 +57,7 @@ export async function createInvoiceAction(
     clientId: formData.get("clientId"),
     // Repeated checkbox fields — getAll, not get.
     clientServiceIds: formData.getAll("clientServiceIds"),
+    coverMonths: formData.get("coverMonths") ?? undefined,
     issueDate: formData.get("issueDate") ?? undefined,
     dueDate: formData.get("dueDate") ?? undefined,
     poNumber: formData.get("poNumber") ?? undefined,
@@ -71,6 +74,7 @@ export async function createInvoiceAction(
     ({ id: invoiceId } = await createInvoiceFromServices({
       clientId: parsed.data.clientId,
       clientServiceIds: parsed.data.clientServiceIds,
+      coverMonths: parsed.data.coverMonths,
       issueDate: parsed.data.issueDate,
       dueDate: parsed.data.dueDate,
       poNumber: parsed.data.poNumber,
@@ -140,6 +144,40 @@ export async function updateInvoiceAction(
     revalidatePath(`/admin/clients/${clientId}`);
   } catch (error) {
     console.error("[updateInvoiceAction]", error);
+    return fail(mapError(error));
+  }
+
+  return { ok: true, error: null };
+}
+
+/* ---------------------------------------------------------------------------
+   Duration — re-price a draft for a different span. "Make it two years."
+--------------------------------------------------------------------------- */
+
+export async function setInvoiceDurationAction(
+  _prev: InvoiceActionState,
+  formData: FormData,
+): Promise<InvoiceActionState> {
+  const parsed = setInvoiceDurationSchema.safeParse({
+    invoiceId: formData.get("invoiceId"),
+    coverMonths: formData.get("coverMonths") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "That duration isn't valid.");
+  }
+
+  try {
+    await requireSession();
+    const { clientId } = await setInvoiceDuration(
+      parsed.data.invoiceId,
+      parsed.data.coverMonths ?? null,
+    );
+    revalidatePath(`/admin/invoices/${parsed.data.invoiceId}`);
+    revalidatePath("/admin/invoices");
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[setInvoiceDurationAction]", error);
     return fail(mapError(error));
   }
 

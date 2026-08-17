@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-import { CURRENCIES, MAX_QUANTITY, parseAmountToCents } from "@/lib/billing";
+import {
+  CURRENCIES,
+  MAX_COVER_MONTHS,
+  MAX_QUANTITY,
+  parseAmountToCents,
+} from "@/lib/billing";
 
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -603,9 +608,30 @@ const clientServiceIds = z
   .transform((value) => (Array.isArray(value) ? value : [value]))
   .pipe(z.array(z.string().uuid()).min(1, "Pick at least one line to invoice"));
 
+/**
+ * How long the invoice bills for, in months — 24 is "two years up front".
+ *
+ * Blank is NOT zero: it means "the usual", one billing cycle per line, which is
+ * how every invoice worked before durations existed. `z.coerce.number()` would
+ * turn "" into 0 and quietly bill nothing, so the empty case is handled first
+ * and lands on undefined.
+ */
+const coverMonths = z
+  .literal("")
+  .transform(() => undefined)
+  .or(
+    z.coerce
+      .number()
+      .int("Give a whole number of months")
+      .min(1, "That has to be at least one month")
+      .max(MAX_COVER_MONTHS, "That's longer than we bill in one invoice")
+      .optional(),
+  );
+
 export const createInvoiceSchema = z.object({
   clientId: z.string().uuid(),
   clientServiceIds,
+  coverMonths,
   // Blank = today / today + the org's payment terms. Filled in by the builder.
   issueDate: optionalDate,
   dueDate: optionalDate,
@@ -625,4 +651,15 @@ export const updateInvoiceSchema = z.object({
 export const setInvoiceStatusSchema = z.object({
   invoiceId: z.string().uuid(),
   status: invoiceStatusSchema,
+});
+
+/** Re-price a DRAFT for a different duration. Draft-only, enforced in the DAL. */
+export const setInvoiceDurationSchema = z.object({
+  invoiceId: z.string().uuid(),
+  coverMonths,
+});
+
+/** The client pressing "Pay now" on their own copy — the token is the credential. */
+export const payInvoiceSchema = z.object({
+  token: z.string().regex(/^[a-f0-9]{32}$/, "That payment link isn't valid"),
 });

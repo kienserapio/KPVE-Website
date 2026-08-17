@@ -9,7 +9,7 @@ import {
 } from "@react-pdf/renderer";
 
 import type { InvoiceDetail } from "@/lib/dal/invoices";
-import { formatMoney, formatTaxRate } from "@/lib/billing";
+import { formatDuration, formatMoney, formatTaxRate } from "@/lib/billing";
 import { formatDate } from "@/lib/utils";
 import { KPVE_LOGO_DATA_URI, LETTERHEAD_BG } from "@/lib/brand/logo";
 
@@ -256,6 +256,12 @@ function InvoicePdf({ invoice }: { invoice: InvoiceDetail }) {
             <MetaLine label="Number" value={invoice.number} />
             <MetaLine label="Issued" value={formatDate(invoice.issueDate)} />
             {invoice.dueDate ? <MetaLine label="Due" value={formatDate(invoice.dueDate)} /> : null}
+            {invoice.coverMonths && invoice.coverStart && invoice.coverEnd ? (
+              <MetaLine
+                label="Period"
+                value={`${formatDate(invoice.coverStart)} – ${formatDate(invoice.coverEnd)}`}
+              />
+            ) : null}
             {invoice.poNumber ? <MetaLine label="PO number" value={invoice.poNumber} /> : null}
           </View>
         </View>
@@ -296,9 +302,18 @@ function InvoicePdf({ invoice }: { invoice: InvoiceDetail }) {
                       <Text style={styles.itemText}>{item}</Text>
                     </View>
                   ))}
-                  {period ? <Text style={styles.period}>{period}</Text> : null}
+                  {period ? (
+                    <Text style={styles.period}>
+                      {line.periods > 1 ? `${line.periods} × ` : ""}
+                      {period}
+                    </Text>
+                  ) : null}
                 </View>
-                <Text style={[styles.cellNum, styles.cQty]}>{line.quantity}</Text>
+                {/* "4 × 24" on a multi-period line, so the row's arithmetic
+                    still closes against the amount. Same rule as the HTML. */}
+                <Text style={[styles.cellNum, styles.cQty]}>
+                  {line.periods > 1 ? `${line.quantity} × ${line.periods}` : line.quantity}
+                </Text>
                 <Text style={[styles.cellNum, styles.cUnit]}>
                   {formatMoney(line.unitAmountCents, currency)}
                 </Text>
@@ -309,6 +324,13 @@ function InvoicePdf({ invoice }: { invoice: InvoiceDetail }) {
             );
           })}
         </View>
+
+        {/* Why the total is what it is, in words — same line as the HTML sheet. */}
+        {invoice.coverMonths ? (
+          <Text style={[styles.lineSub, { marginTop: 8 }]}>
+            Billed {formatDuration(invoice.coverMonths)} in advance.
+          </Text>
+        ) : null}
 
         {/* Totals */}
         <View style={styles.totals}>

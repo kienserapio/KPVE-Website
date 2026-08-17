@@ -7,6 +7,8 @@ import { db } from "@/lib/db";
 import {
   clients,
   clientServices,
+  invoiceLines,
+  invoices,
   payments,
   type BillingInterval,
   type ClientServiceStatus,
@@ -119,8 +121,10 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
     .where(eq(clientServices.id, clientServiceId));
 
   // Remember the customer so the client's next service attaches to the same
-  // record over at the provider instead of creating a second one.
-  if (session.customerId && !line.customerId) {
+  // record over at the provider instead of creating a second one. `replaced`
+  // overwrites a stored id the provider has just rejected — the test-mode
+  // `cus_…` left behind by the switch to live keys.
+  if (session.customerId && (!line.customerId || session.replacedCustomer)) {
     await db
       .update(clients)
       .set({ billingCustomerId: session.customerId })
@@ -138,6 +142,119 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
       provider: session.provider,
       amountCents: line.amountCents,
       currency: line.currency,
+    },
+  });
+
+  return {
+    url: session.url,
+    ref: session.ref,
+    provider: session.provider,
+    createdAt,
+    simulated: provider.simulated,
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   Paying an invoice by card.
+
+   This is the path that makes the document collectable rather than merely
+   printable, and it differs from the service link above in two ways that both
+   matter:
+
+     1. It charges the INVOICE TOTAL, once. Two years of a $44/mo line is a
+        single $1,056 charge, GST included, not a subscription — the recurrence
+        is already priced into the number on the paper.
+
+     2. It is minted when the CLIENT presses "Pay now", not when staff press
+        "Send". A Stripe Checkout Session expires in 24 hours; an invoice sent
+        on Monday gets opened on Thursday. Minting at send time would email out
+        a link that is dead before it is used, which is worse than no button.
+
+   No session check: the caller is the client's own copy of the invoice, holding
+   the unguessable token — exactly the trust model /pay/[ref] already runs on.
+   The token is verified by the action before this is reached, and every rule
+   about WHETHER this invoice can be paid is enforced here rather than there.
+--------------------------------------------------------------------------- */
+
+export async function createInvoiceCheckout(invoiceId: string): Promise<CheckoutInfo> {
+  const [invoice] = await db
+    .select({
+      id: invoices.id,
+      clientId: invoices.clientId,
+      number: invoices.number,
+      status: invoices.status,
+      currency: invoices.currency,
+      totalCents: invoices.totalCents,
+      amountPaidCents: invoices.amountPaidCents,
+      billToEmail: invoices.billToEmail,
+      clientName: clients.name,
+      clientEmail: clients.email,
+      customerId: clients.billingCustomerId,
+    })
+    .from(invoices)
+    .innerJoin(clients, eq(invoices.clientId, clients.id))
+    .where(eq(invoices.id, invoiceId))
+    .limit(1);
+
+  if (!invoice) throw new Error("NOT_FOUND");
+  // A draft is not a document yet and a void one is a closed record. Only a
+  // sent invoice is a thing anyone has been asked to pay.
+  if (invoice.status !== "sent") throw new Error("NOT_PAYABLE");
+
+  const dueCents = invoice.totalCents - invoice.amountPaidCents;
+  if (dueCents <= 0) throw new Error("ALREADY_PAID");
+
+  const provider = getPaymentProvider();
+  const session = await provider.createCheckout({
+    invoiceId: invoice.id,
+    clientId: invoice.clientId,
+    label: `Invoice ${invoice.number}`,
+    // Quantity 1 at the full balance: the itemisation is on the invoice, and
+    // splitting it again at the checkout would only invite the two to disagree.
+    amountCents: dueCents,
+    unitAmountCents: dueCents,
+    quantity: 1,
+    currency: invoice.currency,
+    interval: "one_off",
+    clientName: invoice.clientName,
+    // Whoever is named on the document is who receives the receipt.
+    clientEmail: invoice.billToEmail || invoice.clientEmail,
+    customerId: invoice.customerId,
+    successUrl: `${appUrl()}/pay/complete?session_id={CHECKOUT_SESSION_ID}`,
+    cancelUrl: `${appUrl()}/pay/cancelled`,
+  });
+
+  const createdAt = new Date();
+
+  await db
+    .update(invoices)
+    .set({
+      paymentProvider: session.provider,
+      checkoutRef: session.ref,
+      checkoutUrl: session.url,
+      checkoutCreatedAt: createdAt,
+      updatedAt: createdAt,
+    })
+    .where(eq(invoices.id, invoice.id));
+
+  if (session.customerId && (!invoice.customerId || session.replacedCustomer)) {
+    await db
+      .update(clients)
+      .set({ billingCustomerId: session.customerId })
+      .where(eq(clients.id, invoice.clientId));
+  }
+
+  // "system", not "staff": nobody on the team pressed this — the client did.
+  await logActivity({
+    actorType: "system",
+    entityType: "invoice",
+    entityId: invoice.id,
+    action: "invoice.checkout_started",
+    metadata: {
+      number: invoice.number,
+      provider: session.provider,
+      amountCents: dueCents,
+      currency: invoice.currency,
     },
   });
 
@@ -195,6 +312,12 @@ export type ApplyResult = {
 };
 
 export async function applyPaymentSucceeded(event: PaymentEvent): Promise<ApplyResult> {
+  // An invoice payment settles a document and everything under it; a service
+  // payment settles one line. The webhook can't tell them apart — the metadata
+  // on the event can, and did.
+  if (event.invoiceId) return applyInvoicePaymentSucceeded(event);
+  if (!event.clientServiceId) return { applied: false, clientId: null };
+
   const [line] = await db
     .select({
       id: clientServices.id,
@@ -292,6 +415,163 @@ export async function applyPaymentSucceeded(event: PaymentEvent): Promise<ApplyR
   return { applied: true, clientId: line.clientId };
 }
 
+/* ---------------------------------------------------------------------------
+   An invoice was paid.
+
+   Same contract as the function above — idempotent on provider_ref, writes the
+   ledger first, never trusts the caller — but it settles a DOCUMENT, and a
+   document can cover more than one line and more than one cycle.
+
+   The part that makes prepayment real is rolling each covered line forward to
+   the END of what was bought. A client who pays two years up front must not
+   reappear in "upcoming bills" next month; their next charge is in 2028, and
+   the invoice line's own period end is the record of when. Nothing here touches
+   the RATE — the line is still $44/mo and still contributes $44 to MRR, which
+   is what monthly revenue recognition means.
+--------------------------------------------------------------------------- */
+
+async function applyInvoicePaymentSucceeded(event: PaymentEvent): Promise<ApplyResult> {
+  const invoiceId = event.invoiceId!;
+
+  const [invoice] = await db
+    .select({
+      id: invoices.id,
+      clientId: invoices.clientId,
+      number: invoices.number,
+      status: invoices.status,
+      currency: invoices.currency,
+      totalCents: invoices.totalCents,
+      amountPaidCents: invoices.amountPaidCents,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .limit(1);
+
+  if (!invoice) return { applied: false, clientId: null };
+
+  const amountCents = event.amountCents || invoice.totalCents - invoice.amountPaidCents;
+
+  // The lines this invoice bought, and how long each was paid for.
+  const lines = await db
+    .select({
+      clientServiceId: invoiceLines.clientServiceId,
+      periodEnd: invoiceLines.periodEnd,
+    })
+    .from(invoiceLines)
+    .where(eq(invoiceLines.invoiceId, invoiceId));
+
+  const serviceIds = [
+    ...new Set(lines.map((l) => l.clientServiceId).filter((id): id is string => Boolean(id))),
+  ];
+
+  const [ledgerRow] = await db
+    .insert(payments)
+    .values({
+      clientId: invoice.clientId,
+      // Only when the invoice IS that one line. Attributing a multi-line
+      // payment to whichever line happened to be first would misreport every
+      // per-service revenue number that reads this column.
+      clientServiceId: serviceIds.length === 1 ? serviceIds[0] : null,
+      invoiceId: invoice.id,
+      provider: event.provider,
+      providerRef: event.providerRef,
+      status: "succeeded",
+      amountCents,
+      currency: (event.currency || invoice.currency).toUpperCase(),
+      description: event.description ?? `Invoice ${invoice.number}`,
+      paidAt: event.paidAt,
+    })
+    .onConflictDoNothing({ target: payments.providerRef })
+    .returning({ id: payments.id });
+
+  if (!ledgerRow) return { applied: false, clientId: invoice.clientId, duplicate: true };
+
+  // Void is terminal and stays terminal: money arriving against a cancelled
+  // document is a refund conversation, not a reason to un-void it. The ledger
+  // row above still records that it arrived.
+  if (invoice.status !== "void") {
+    const paidCents = invoice.amountPaidCents + amountCents;
+    const settled = paidCents >= invoice.totalCents;
+
+    await db
+      .update(invoices)
+      .set({
+        status: settled ? "paid" : invoice.status,
+        amountPaidCents: paidCents,
+        paidAt: settled ? event.paidAt : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(invoices.id, invoice.id));
+  }
+
+  // Roll every covered line forward. `period_end` is the last day the client
+  // has paid for, so the next charge is the day after it — for a two-year
+  // invoice that is two years out, which is the whole point of paying up front.
+  for (const line of lines) {
+    if (!line.clientServiceId) continue;
+
+    const [service] = await db
+      .select({ status: clientServices.status, interval: clientServices.interval })
+      .from(clientServices)
+      .where(eq(clientServices.id, line.clientServiceId))
+      .limit(1);
+    if (!service) continue;
+
+    const set: Record<string, unknown> = {
+      lastPaymentAt: event.paidAt,
+      updatedAt: new Date(),
+    };
+
+    // A cancelled line stays cancelled — settling an old invoice must not
+    // quietly restart something the client already ended.
+    if (service.status !== "cancelled") {
+      set.status = "active";
+      set.nextBillAt =
+        service.interval === "one_off"
+          ? null
+          : line.periodEnd
+            ? dayAfter(line.periodEnd)
+            : nextBillFrom(event.paidAt, service.interval);
+    }
+
+    await db.update(clientServices).set(set).where(eq(clientServices.id, line.clientServiceId));
+  }
+
+  await db.update(clients).set({ updatedAt: new Date() }).where(eq(clients.id, invoice.clientId));
+
+  if (event.customerId) {
+    await db
+      .update(clients)
+      .set({ billingCustomerId: event.customerId })
+      .where(and(eq(clients.id, invoice.clientId), sql`${clients.billingCustomerId} is null`));
+  }
+
+  await logActivity({
+    actorType: "system",
+    entityType: "invoice",
+    entityId: invoice.id,
+    action: "invoice.paid",
+    metadata: {
+      number: invoice.number,
+      via: "checkout",
+      amountCents,
+      currency: event.currency || invoice.currency,
+      provider: event.provider,
+      providerRef: event.providerRef,
+      paymentId: ledgerRow.id,
+    },
+  });
+
+  return { applied: true, clientId: invoice.clientId };
+}
+
+/** A `date` column ('YYYY-MM-DD') → local midnight the following day. */
+function dayAfter(value: string | Date): Date {
+  const date = value instanceof Date ? new Date(value) : new Date(`${value}T00:00:00`);
+  date.setDate(date.getDate() + 1);
+  return date;
+}
+
 export async function applyPaymentFailed(input: {
   clientServiceId: string;
   providerRef: string;
@@ -381,12 +661,14 @@ export async function applySubscriptionCancelled(input: {
 
 export type PublicCheckout = {
   ref: string;
+  /** What the ref points at — a billing line, or a whole invoice. */
+  kind: "service" | "invoice";
   label: string;
   amountCents: number;
   currency: string;
   interval: BillingInterval;
   clientName: string;
-  status: ClientServiceStatus;
+  status: ClientServiceStatus | null;
   /** Already settled — the page says so instead of taking a second payment. */
   paid: boolean;
   simulated: boolean;
@@ -397,6 +679,12 @@ export async function getCheckoutByRef(ref: string): Promise<PublicCheckout | nu
   // Covers both `mock_cs_<32 hex>` and Stripe's `cs_test_…` / `cs_live_…`.
   if (!/^[a-z]+_[a-z0-9]+_[a-zA-Z0-9]{8,120}$/.test(ref)) return null;
 
+  const service = await getServiceCheckoutByRef(ref);
+  if (service) return service;
+  return getInvoiceCheckoutByRef(ref);
+}
+
+async function getServiceCheckoutByRef(ref: string): Promise<PublicCheckout | null> {
   const [row] = await db
     .select({
       ref: clientServices.checkoutRef,
@@ -427,6 +715,7 @@ export async function getCheckoutByRef(ref: string): Promise<PublicCheckout | nu
 
   return {
     ref: row.ref,
+    kind: "service",
     label: row.label,
     amountCents: row.amountCents,
     currency: row.currency,
@@ -434,6 +723,47 @@ export async function getCheckoutByRef(ref: string): Promise<PublicCheckout | nu
     clientName: row.clientName,
     status: row.status,
     paid,
+    simulated: row.provider !== "stripe",
+  };
+}
+
+/**
+ * The same page, for an invoice checkout. An invoice is always a single charge
+ * for a fixed amount, so it presents as a one-off however the lines underneath
+ * it recur — and "paid" is a property of the DOCUMENT here, not of when the
+ * link was minted: an invoice settled by bank transfer must stop offering a
+ * card payment too.
+ */
+async function getInvoiceCheckoutByRef(ref: string): Promise<PublicCheckout | null> {
+  const [row] = await db
+    .select({
+      ref: invoices.checkoutRef,
+      number: invoices.number,
+      status: invoices.status,
+      totalCents: invoices.totalCents,
+      amountPaidCents: invoices.amountPaidCents,
+      currency: invoices.currency,
+      provider: invoices.paymentProvider,
+      billToName: invoices.billToName,
+    })
+    .from(invoices)
+    .where(eq(invoices.checkoutRef, ref))
+    .limit(1);
+
+  if (!row?.ref) return null;
+
+  const dueCents = row.totalCents - row.amountPaidCents;
+
+  return {
+    ref: row.ref,
+    kind: "invoice",
+    label: `Invoice ${row.number}`,
+    amountCents: dueCents > 0 ? dueCents : row.totalCents,
+    currency: row.currency,
+    interval: "one_off",
+    clientName: row.billToName,
+    status: null,
+    paid: row.status === "paid" || dueCents <= 0,
     simulated: row.provider !== "stripe",
   };
 }
@@ -463,7 +793,9 @@ export async function simulatePayment(ref: string): Promise<ApplyResult> {
     .where(eq(clientServices.checkoutRef, ref))
     .limit(1);
 
-  if (!line) throw new Error("NOT_FOUND");
+  // Not a billing line — it may be an invoice checkout, which settles a whole
+  // document instead. Same simulator, same downstream code path.
+  if (!line) return simulateInvoicePayment(ref);
 
   // Pressing "Pay" twice must not book the money twice. Every simulated payment
   // mints its own event ref, so the unique index downstream cannot catch this
@@ -485,6 +817,41 @@ export async function simulatePayment(ref: string): Promise<ApplyResult> {
     paidAt: new Date(),
     subscriptionId: `mock_sub_${line.id.slice(0, 8)}`,
     description: `${line.label} (simulated)`,
+  });
+}
+
+/** The invoice half of the simulator. Only reached from simulatePayment above. */
+async function simulateInvoicePayment(ref: string): Promise<ApplyResult> {
+  const [invoice] = await db
+    .select({
+      id: invoices.id,
+      number: invoices.number,
+      status: invoices.status,
+      currency: invoices.currency,
+      totalCents: invoices.totalCents,
+      amountPaidCents: invoices.amountPaidCents,
+    })
+    .from(invoices)
+    .where(eq(invoices.checkoutRef, ref))
+    .limit(1);
+
+  if (!invoice) throw new Error("NOT_FOUND");
+
+  // Same reason as above: each simulated payment mints its own event ref, so
+  // the unique index can't catch a double press. Here the invoice's own balance
+  // is the guard, which also covers a payment taken by bank transfer meanwhile.
+  const dueCents = invoice.totalCents - invoice.amountPaidCents;
+  if (invoice.status === "paid" || dueCents <= 0) throw new Error("ALREADY_PAID");
+  if (invoice.status !== "sent") throw new Error("NOT_PAYABLE");
+
+  return applyPaymentSucceeded({
+    provider: "mock",
+    providerRef: `mock_evt_${randomBytes(16).toString("hex")}`,
+    invoiceId: invoice.id,
+    amountCents: dueCents,
+    currency: invoice.currency,
+    paidAt: new Date(),
+    description: `Invoice ${invoice.number} (simulated)`,
   });
 }
 

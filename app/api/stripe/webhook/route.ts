@@ -111,5 +111,6 @@ function revalidateFor(clientId: string) {
   revalidatePath(`/admin/clients/${clientId}`);
   revalidatePath("/admin/clients");
   revalidatePath("/admin/revenue");
+  revalidatePath("/admin/invoices");
   revalidatePath("/admin");
 }

@@ -239,9 +239,28 @@ On the client page, the **Invoices** card → **New invoice**:
 
 1. **Tick the lines** to bill. The active ones are pre-ticked; a line you've
    already invoiced is tagged but still available (reissuing is fine).
-2. Optionally set the **issue date**, **due date** (defaults to your payment
+2. **Bill for** — how long this invoice covers. Leave it on *One billing cycle*
+   for the normal monthly invoice, or pick **1 year**, **2 years**, **3 years**,
+   or **Custom…** for any number of months. See below.
+3. Optionally set the **issue date**, **due date** (defaults to your payment
    terms), a **PO number** and **notes**.
-3. **Create** — it lands as a **draft** so you can check it before it's a document.
+4. **Create** — it lands as a **draft** so you can check it before it's a document.
+
+**Billing two years up front.** Pick *2 years* and each recurring line is
+multiplied by however many of its own cycles fit: a $44/mo line becomes 24
+charges — $1,056 — and an annual line becomes 2. A one-off is never multiplied;
+a project fee doesn't repeat. The builder shows the working per line and the
+total before you create anything, and the invoice prints "24 × 1 Sep 2026 –
+31 Aug 2028" against the line plus the period in the header.
+
+Their **rate never changes**. The client is still on $44/mo, MRR still counts $44
+— you've collected two years of it early, not signed them onto a bigger plan. And
+when they pay, that line's next bill date jumps to the day after the period ends,
+so they won't turn up in next month's upcoming bills.
+
+Got the duration wrong? While it's still a **draft**, change *Bill for* at the
+top of the invoice and press **Apply** — every line and the GST re-price. Once
+it's sent it's frozen like any other invoice: void and reissue.
 
 The invoice opens. It carries **your** ABN and address, the **client's** (the
 company's, when you invoiced a company), every line with its quantity and the
@@ -250,7 +269,10 @@ can edit or delete it. Then:
 
 - **Send** — marks it sent. Now **Copy client link** or **Email it** — the client
   gets a read-only page at `/invoice/…` with a **Pay now** button (and your bank
-  details for transfers).
+  details for transfers). Pay now charges the invoice **balance**, once — the
+  whole $1,056 on a two-year invoice, not $44 a month. The link never expires:
+  the checkout is created at the moment they press the button, so an invoice
+  opened three weeks later still works.
 - **Print** — your browser's *Save as PDF* produces the file. It's the same
   document the client sees.
 - When they pay the link, the invoice marks itself **Paid**. Or click **Mark

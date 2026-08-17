@@ -10,7 +10,17 @@ import {
 import type { InvoiceListItem } from "@/lib/dal/invoices";
 import type { BillingInterval, ClientServiceStatus } from "@/lib/db/schema";
 import { formatDate } from "@/lib/utils";
-import { formatMoney, formatQuantityLine, formatRate } from "@/lib/billing";
+import {
+  cyclesForDuration,
+  DURATION_PRESETS,
+  formatCycles,
+  formatDuration,
+  formatMoney,
+  formatQuantityLine,
+  formatRate,
+  MAX_COVER_MONTHS,
+  periodTotalCents,
+} from "@/lib/billing";
 import {
   AdminButton,
   AdminInput,
@@ -46,6 +56,9 @@ type BuilderLine = {
 };
 
 const initialState: InvoiceActionState = { ok: false, error: null };
+
+const selectClass =
+  "w-full rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2.5 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25";
 
 export function ClientInvoices({
   clientId,
@@ -165,6 +178,11 @@ function NewInvoiceForm({
     ),
   );
 
+  // How long this invoice bills for. `null` is the default — one cycle per
+  // line, which is how every invoice worked before durations existed.
+  const [coverMonths, setCoverMonths] = useState<number | null>(null);
+  const [customOpen, setCustomOpen] = useState(false);
+
   const checkedLines = services.filter((line) => checked[line.id]);
   // The action rejects a mix of currencies; say so before submit rather than
   // after a round-trip. Muted, not blocking — the staff member may be about to
@@ -173,8 +191,33 @@ function NewInvoiceForm({
   const mixedCurrency = currencies.size > 1;
   const noneChecked = checkedLines.length === 0;
 
+  // The same maths the DAL runs at issue, run here so the number on the button
+  // is the number on the invoice. Tax is deliberately NOT applied: whether GST
+  // is added or extracted is an org setting the builder doesn't know, and a
+  // preview that guessed at it would be wrong for half of them.
+  const previewCents = checkedLines.reduce(
+    (sum, line) =>
+      sum +
+      periodTotalCents(
+        line.unitAmountCents || line.amountCents,
+        line.quantity || 1,
+        cyclesForDuration(line.interval, coverMonths),
+      ),
+    0,
+  );
+  const previewCurrency = checkedLines[0]?.currency ?? "AUD";
+
   function toggle(id: string) {
     setChecked((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function pickPreset(value: string) {
+    if (value === "custom") {
+      setCustomOpen(true);
+      return;
+    }
+    setCustomOpen(false);
+    setCoverMonths(value === "" ? null : Number(value));
   }
 
   return (
@@ -245,6 +288,90 @@ function NewInvoiceForm({
           </p>
         )}
       </div>
+
+      {/* Duration — bill more than one cycle on this one document. The rate on
+          the client's billing lines never moves; only this invoice multiplies. */}
+      <div className="flex flex-col gap-2">
+        <div>
+          <AdminLabel htmlFor="duration">Bill for</AdminLabel>
+          <select
+            id="duration"
+            value={customOpen ? "custom" : coverMonths === null ? "" : String(coverMonths)}
+            onChange={(event) => pickPreset(event.target.value)}
+            className={selectClass}
+          >
+            {DURATION_PRESETS.map((preset) => (
+              <option key={preset.label} value={preset.months === null ? "" : preset.months}>
+                {preset.label}
+              </option>
+            ))}
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+
+        {customOpen && (
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              max={MAX_COVER_MONTHS}
+              step={1}
+              value={coverMonths ?? ""}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setCoverMonths(Number.isFinite(next) && next > 0 ? Math.trunc(next) : null);
+              }}
+              placeholder="18"
+              aria-label="Months to bill for"
+              className={`${selectClass} max-w-[7rem]`}
+            />
+            <span className="text-sm text-[var(--admin-fg-muted)]">months</span>
+          </div>
+        )}
+
+        {/* The multiplier is per line, because a monthly line and an annual one
+            do not get the same number of charges out of the same span. */}
+        {coverMonths !== null && checkedLines.length > 0 && (
+          <ul className="flex flex-col gap-0.5">
+            {checkedLines.map((line) => {
+              const cycles = cyclesForDuration(line.interval, coverMonths);
+              const detail = formatCycles(line.interval, cycles);
+              return (
+                <li key={line.id} className="text-[11px] text-[var(--admin-fg-subtle)]">
+                  {line.label} ·{" "}
+                  {detail
+                    ? `${detail} = ${formatMoney(
+                        periodTotalCents(
+                          line.unitAmountCents || line.amountCents,
+                          line.quantity || 1,
+                          cycles,
+                        ),
+                        line.currency,
+                      )}`
+                    : line.interval === "one_off"
+                      ? "one-off — not multiplied"
+                      : "one charge"}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {!noneChecked && !mixedCurrency && (
+          <p className="text-xs text-[var(--admin-fg-muted)]">
+            {coverMonths === null
+              ? "One billing cycle per line."
+              : `${formatDuration(coverMonths)} up front.`}{" "}
+            Lines total{" "}
+            <Money className="font-medium">{formatMoney(previewCents, previewCurrency)}</Money>{" "}
+            before GST.
+          </p>
+        )}
+      </div>
+
+      {/* The value the action reads. Held apart from the controls above so the
+          preset/custom split never has to round-trip through the form. */}
+      <input type="hidden" name="coverMonths" value={coverMonths ?? ""} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>

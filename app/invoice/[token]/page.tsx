@@ -5,6 +5,7 @@ import { getInvoiceByToken } from "@/lib/dal/invoices";
 import { formatMoney } from "@/lib/billing";
 import { InvoiceDocument } from "@/components/admin/InvoiceDocument";
 import { PrintButton } from "@/components/admin/InvoiceActions";
+import { PayInvoiceButton } from "./PayInvoiceButton";
 
 /* ---------------------------------------------------------------------------
    The client's own copy of an invoice, reached by the unguessable token — the
@@ -39,8 +40,8 @@ export default async function PublicInvoicePage({
   // non-enumerable behaviour as a wrong /pay ref.
   if (!invoice) notFound();
 
-  const canPayNow = invoice.status === "sent" && Boolean(invoice.payUrl);
   const isPaid = invoice.status === "paid";
+  const balanceDueCents = invoice.totalCents - invoice.amountPaidCents;
 
   return (
     <main
@@ -67,24 +68,26 @@ export default async function PublicInvoicePage({
               <span className="inline-flex items-center rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface)] px-4 py-2.5 text-sm font-medium text-[var(--svc-active-fg)]">
                 Paid — thank you
               </span>
-            ) : canPayNow ? (
-              <a
-                href={invoice.payUrl!}
-                className="inline-flex items-center justify-center rounded-lg bg-[var(--admin-accent)] px-5 py-2.5 text-sm font-semibold text-[var(--admin-accent-fg)] transition hover:brightness-110"
-              >
-                Pay now {formatMoney(invoice.totalCents, invoice.currency)}
-              </a>
+            ) : invoice.payable ? (
+              // The amount on the button is the BALANCE, not the total: a
+              // part-paid invoice must never ask for the whole thing again.
+              <PayInvoiceButton
+                token={token}
+                label={`Pay now ${formatMoney(balanceDueCents, invoice.currency)}`}
+              />
             ) : null}
           </div>
         </div>
 
         <InvoiceDocument invoice={invoice} variant="public" />
 
-        {/* When there's no one-click link, the document's EFT "how to pay" block
-            is the instruction — say so plainly rather than leaving a dead end. */}
-        {!canPayNow && !isPaid && invoice.status === "sent" && !invoice.payUrl && (
+        {/* Bank transfer is always an option and is the only one on a document
+            with nothing payable left — say so rather than leaving a dead end. */}
+        {!isPaid && (
           <p className="no-print mt-6 text-center text-sm text-[var(--admin-fg-muted)]">
-            Pay by bank transfer using the details on the invoice above.
+            {invoice.payable
+              ? "Or pay by bank transfer using the details on the invoice above."
+              : "Pay by bank transfer using the details on the invoice above."}
           </p>
         )}
       </div>

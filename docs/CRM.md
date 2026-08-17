@@ -150,6 +150,7 @@ runs the moment `STRIPE_SECRET_KEY` exists. Nothing above that layer knows which
 
 ```
 staff clicks "Payment link"  →  provider.createCheckout()  →  link stored on the line
+client clicks "Pay now"      →  createInvoiceCheckout()    →  redirect to the session
 client pays                  →  webhook | simulator        →  applyPaymentSucceeded()
 ```
 
@@ -158,7 +159,24 @@ Stripe webhook and the simulated `/pay/[ref]` page call it, so the flow being ex
 today is the one that runs when a real card clears — flip the keys and the behaviour is
 already proven. Nobody sets "paid" by hand; the ledger and the status can't disagree.
 
-**Going live** is two environment variables and a dashboard entry — no code change:
+**Two kinds of checkout**, told apart by the metadata on the event:
+
+| | Service checkout | Invoice checkout |
+|---|---|---|
+| Started by | staff, "Payment link" on a billing line | the client, "Pay now" on their invoice |
+| Charges | the line's rate, recurring → a real subscription | the invoice **balance**, once |
+| Metadata | `client_service_id` | `kpve_invoice_id` |
+| Settles | that one line | the document, and every line under it |
+
+An invoice is a **fixed amount due**, so its checkout is always a single charge. Handing a
+client the line's monthly subscription link to settle a two-year invoice would collect $44
+against a $1,056 document — which is exactly what the old single-line `payUrl` did.
+
+The invoice session is minted **when the client presses the button**, not when staff press
+Send. A Stripe Checkout Session expires in 24 hours and an invoice does not; baking a URL
+into the emailed page would send a button that is dead before anyone reaches it.
+
+**Going live** is environment variables and a dashboard entry — no code change:
 
 1. `STRIPE_SECRET_KEY` (Stripe → Developers → API keys)
 2. `STRIPE_WEBHOOK_SECRET`, from an endpoint registered at
@@ -170,6 +188,14 @@ already proven. Nobody sets "paid" by hand; the ledger and the status can't disa
 Keys without the webhook secret means links work and payments are never recorded — the
 Revenue page warns when it sees that combination. There is no `stripe` npm dependency;
 the three calls needed are plain `fetch` against a pinned API version.
+
+**Test → live keeps the database.** A `cus_…` stored in `clients.billing_customer_id`
+during test mode does not exist in live mode, and the two are indistinguishable by prefix.
+Rather than leave that client unable to pay, `StripePaymentProvider.createCheckout()`
+catches the `resource_missing` on `customer`, retries once as a new customer and flags
+`replacedCustomer` so the DAL overwrites the stale id. Clearing them up front
+(`update clients set billing_customer_id = null;`) is still tidier if the test data was
+throwaway.
 
 ## Invoices and GST
 
@@ -189,6 +215,17 @@ draft  →  Send  →  sent  →  Paid | Void        (transitions enforced in th
   provisioned items are frozen onto the invoice at issue. Editing a sent invoice is refused;
   it's void-and-reissue, which is how invoices work. Only a **draft** is editable or deletable
   (deleting an issued one would punch a hole in the number sequence).
+- **Duration** (`invoices.cover_months`, `invoice_lines.periods`). An invoice can bill
+  more than one cycle: pick "2 years" (or any custom number of months) in the builder and
+  each recurring line is multiplied by however many of ITS cycles fit — 24 on a monthly
+  line, 2 on an annual one, never anything on a one-off. The multiplier is frozen onto the
+  line at issue (`amount_cents = unit × qty × periods`) and the client's **rate never
+  moves**: the line is still $44/mo and still contributes $44 to MRR, because two years
+  collected up front is still monthly revenue recognised monthly. A **draft** can be
+  re-priced for a different duration (`setInvoiceDuration()`); a sent one cannot, like
+  every other edit. When such an invoice is paid, each covered line's `next_bill_at` rolls
+  to the day after its `period_end` — so a client who paid to 2028 is not in next month's
+  upcoming-bills list.
 - **One path to revenue, still.** Paying an invoice's link runs the same
   `applyPaymentSucceeded()` as everything else. Reconciliation lives in `lib/dal/invoices.ts`
   (imported by `payments.ts`, never the reverse — no cycle) and is **best-effort**: it's

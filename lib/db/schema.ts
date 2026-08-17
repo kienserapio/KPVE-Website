@@ -591,6 +591,20 @@ export const invoices = pgTable(
     dueDate: date("due_date"),
     currency: text("currency").notNull().default("AUD"),
 
+    /**
+     * How long this invoice bills for, in MONTHS — "2 years up front" is 24.
+     *
+     * Null means the historical default: one billing cycle per line (one month
+     * for a monthly line, one year for an annual one). It is stored in months
+     * rather than cycles because an invoice can carry lines on different
+     * cycles, and "24 months" is the one duration that means the same thing to
+     * a monthly line (24 charges) and an annual one (2 charges). The per-line
+     * conversion happens once, at issue, and is frozen onto invoice_lines.periods.
+     *
+     * One-off lines are never multiplied by it — a project fee is not a cycle.
+     */
+    coverMonths: integer("cover_months"),
+
     /* ---- Money, all integer minor units ----
        Held on the invoice rather than recomputed from the lines, because the
        lines can be deleted and the tax rate can change; the printed document
@@ -625,6 +639,22 @@ export const invoices = pgTable(
     notes: text("notes"),
     poNumber: text("po_number"),
 
+    /* ---- Card payment for THIS invoice (see lib/dal/payments.ts) ----
+       An invoice is a fixed amount due, so its checkout is always a ONE-OFF
+       charge for total_cents — never the subscription a client_services link
+       mints. Billing two years up front and sending the monthly subscription
+       link would take $11 against an invoice for $1,056.
+
+       The session is minted when the client presses "Pay now" on their copy,
+       not when the invoice is sent: a Stripe Checkout Session expires in 24
+       hours, and an invoice emailed on Monday is opened on Thursday. These
+       columns hold the most recent one, which is what /pay/[ref] resolves and
+       what the activity log refers to. */
+    paymentProvider: text("payment_provider"),
+    checkoutRef: text("checkout_ref"),
+    checkoutUrl: text("checkout_url"),
+    checkoutCreatedAt: timestamp("checkout_created_at", { withTimezone: true }),
+
     sentAt: timestamp("sent_at", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
@@ -638,6 +668,9 @@ export const invoices = pgTable(
   (table) => [
     uniqueIndex("invoices_number_idx").on(table.number),
     uniqueIndex("invoices_public_token_idx").on(table.publicToken),
+    // Postgres allows many NULLs in a unique index, so invoices with no live
+    // checkout don't collide — the same shape as client_services.checkout_ref.
+    uniqueIndex("invoices_checkout_ref_idx").on(table.checkoutRef),
     index("invoices_client_idx").on(table.clientId),
     // The collections queue is "status = sent, due_date in the past".
     index("invoices_status_idx").on(table.status),
@@ -675,6 +708,17 @@ export const invoiceLines = pgTable(
 
     unitAmountCents: integer("unit_amount_cents").notNull().default(0),
     quantity: integer("quantity").notNull().default(1),
+
+    /**
+     * How many billing cycles this one line covers — 24 on a monthly line of a
+     * two-year invoice, 2 on an annual one, always 1 on a one-off.
+     *
+     * INVARIANT: `amount_cents` = `unit_amount_cents × quantity × periods`.
+     * Derived once from invoices.cover_months at issue and then frozen, so
+     * changing the duration of a future invoice never re-prices this one.
+     */
+    periods: integer("periods").notNull().default(1),
+
     amountCents: integer("amount_cents").notNull().default(0),
 
     /**

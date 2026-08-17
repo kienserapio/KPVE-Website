@@ -527,17 +527,36 @@ The code for P0–P5 is done. Everything below is account admin and judgement.
    Active on its own. `PAYMENTS_PROVIDER=mock` puts the simulator back if you
    want to demo without touching Stripe.
 
+**Switching test → LIVE on Vercel** — still no code change, all environment:
+
+7. In Stripe, flip the dashboard out of test mode and **register a second
+   webhook endpoint** at `https://kpve.com/api/stripe/webhook` with the same
+   four events. Live and test endpoints are separate objects with separate
+   signing secrets; the test one does not carry over.
+8. In **Vercel → Settings → Environment Variables**, set
+   `STRIPE_SECRET_KEY` (`sk_live_…`),
+   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (`pk_live_…`),
+   `STRIPE_WEBHOOK_SECRET` (the live `whsec_…`) and `NEXT_PUBLIC_APP_URL`
+   (`https://kpve.com`) — scoped to **Production only**, leaving the test keys
+   on Preview and Development so a preview build can never charge a real card.
+9. **Redeploy.** Vercel injects env vars at build time and `NEXT_PUBLIC_*` are
+   compiled into the bundle, so an existing deployment keeps the old values.
+10. `update clients set billing_customer_id = null;` — test-mode customer ids
+    don't exist in live mode. The code self-heals (it retries as a new customer)
+    but clearing them is tidier. Make sure `PAYMENTS_PROVIDER` is **not** set to
+    `mock` in Production: it would settle invoices without taking any money.
+
 **Ongoing:**
 
-7. **Daily snapshot.** Cron `npm run revenue:snapshot` (or a Vercel cron) so the
-   MRR trend is recorded rather than reconstructed. It also runs on the first
-   Revenue page view of the day, which covers most of it.
-8. **GST decision** — Australian clients are 10% if KPVE is registered. Decide
-   tax-inclusive pricing vs a tax line *before* invoicing for real; retrofitting
-   it across issued invoices is the expensive version of this decision.
-9. **Catalogue prices.** `npm run services:seed` puts placeholders in. Real ones
-   need typing at `/admin/services` by someone who knows them.
-10. **Onboarding checklists.** Write the real steps per service at
+11. **Daily snapshot.** Cron `npm run revenue:snapshot` (or a Vercel cron) so the
+    MRR trend is recorded rather than reconstructed. It also runs on the first
+    Revenue page view of the day, which covers most of it.
+12. **GST decision** — Australian clients are 10% if KPVE is registered. Decide
+    tax-inclusive pricing vs a tax line *before* invoicing for real; retrofitting
+    it across issued invoices is the expensive version of this decision.
+13. **Catalogue prices.** `npm run services:seed` puts placeholders in. Real ones
+    need typing at `/admin/services` by someone who knows them.
+14. **Onboarding checklists.** Write the real steps per service at
     `/admin/services` — the mechanism is built, the content is yours.
 
 Optional, unrelated to Stripe: a **Resend API key** switches on the new-lead
@@ -784,7 +803,7 @@ at once get two numbers, not one number and a 500.
   EFT details. No PDF dependency — the browser's Print to PDF produces the file,
   and it's the same file the client sees.
 - **`/invoice/[token]`** — the client's read-only copy, same document, with a
-  **Pay now** button when the line has a link.
+  **Pay now** button for the outstanding balance (see P7.7).
 - **On the client page** — an **Invoices** card and a **New invoice** action that
   preselects the lines due, sets the period from each line's cycle, pulls the
   bill-to from the billing profile (the company's, when invoicing a company),
@@ -798,6 +817,46 @@ at once get two numbers, not one number and a 500.
 the invoice is raised against the **company** record, carries the company's
 legal name and ABN, and the individual's page lists it under their businesses.
 That is the whole "so they can claim the expense" requirement.
+
+## ✅ P7.7 — Billing duration, and an invoice that actually collects — BUILT
+
+Two things a real CRM does that this one didn't.
+
+**Bill more than one cycle.** `invoices.cover_months` + `invoice_lines.periods`.
+The builder offers 3 / 6 months, 1 / 2 / 3 years or any custom number of months,
+and each recurring line is multiplied by however many of *its own* cycles fit —
+24 on a monthly line, 2 on an annual one, never anything on a one-off, because a
+project fee doesn't repeat. Duration is carried in **months**, not cycles, because
+one invoice can hold lines on different cycles and "24 months" is the only unit
+that means the same thing to both.
+
+The multiplier is frozen onto the line at issue
+(`amount_cents = unit × qty × periods`) and the **rate never moves**: the client
+is still on $44/mo and still contributes $44 to MRR. Two years collected up front
+is monthly revenue recognised monthly, not a bigger plan. A **draft** can be
+re-priced for a different duration (`setInvoiceDuration()`) — every line is
+re-derived from its own unit price, never by multiplying the stored total, so
+1 year → 2 years → 1 year returns to where it started.
+
+**An invoice that can be paid.** `invoices.checkout_ref` / `checkout_url` /
+`payment_provider`, and a second kind of checkout distinguished by the
+`kpve_invoice_id` metadata. It charges the invoice **balance, once**. The old
+`payUrl` handed the client the underlying line's *subscription* link, which on a
+two-year invoice would have collected $44 against a $1,056 document.
+
+The session is minted when the client presses **Pay now**, not when staff press
+Send: a Stripe Checkout Session expires in 24 hours and an invoice does not. When
+it settles, `applyInvoicePaymentSucceeded()` writes the ledger row (idempotent on
+`provider_ref` like everything else), marks the invoice paid, and rolls every
+covered line's `next_bill_at` to the day after its `period_end` — so a client who
+paid to 2028 is not in next month's upcoming bills. The simulator settles invoice
+refs through the identical path, so the flow is proven before the live keys land.
+
+**Test → live customer ids.** A `cus_…` stored during test mode does not exist in
+live mode and is indistinguishable by prefix. `StripePaymentProvider` catches the
+`resource_missing`, retries once as a new customer and flags `replacedCustomer`
+so the DAL overwrites the stale id, rather than leaving that client permanently
+unable to pay.
 
 ## ✅ P7.6 — Docs — BUILT
 

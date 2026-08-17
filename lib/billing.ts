@@ -220,6 +220,92 @@ export function lineTotalCents(unitAmountCents: number, quantity: number): numbe
 }
 
 /* ---------------------------------------------------------------------------
+   Duration — billing more than one cycle on a single invoice.
+
+   "Two years of hosting, paid up front" is not a different price and not a
+   different service; it is the SAME line billed 24 times at once. So duration
+   is a multiplier on the line, never an edit to the client_services row: the
+   rate stays $30/mo, MRR stays $30, and only the invoice says 24.
+
+   Duration is carried in MONTHS rather than cycles because one invoice can hold
+   lines on different cycles. "24 months" means 24 charges to a monthly line and
+   2 to an annual one; "2 cycles" would mean two completely different spans of
+   time on the same document.
+--------------------------------------------------------------------------- */
+
+/** Ten years. Past this it isn't a prepayment, it's a different contract. */
+export const MAX_COVER_MONTHS = 120;
+
+/** The picker's shortcuts. `null` is the default — one cycle per line. */
+export const DURATION_PRESETS: { months: number | null; label: string }[] = [
+  { months: null, label: "One billing cycle" },
+  { months: 3, label: "3 months" },
+  { months: 6, label: "6 months" },
+  { months: 12, label: "1 year" },
+  { months: 24, label: "2 years" },
+  { months: 36, label: "3 years" },
+];
+
+/** Months in one cycle. Weekly is 12/52 of a month — the inverse of MONTHLY_FACTOR. */
+const MONTHS_PER_CYCLE: Record<Exclude<BillingInterval, "one_off">, number> = {
+  weekly: 12 / 52,
+  monthly: 1,
+  quarterly: 3,
+  annually: 12,
+};
+
+/**
+ * How many cycles of `interval` a duration of `coverMonths` buys.
+ *
+ * A one-off is always 1: a project fee doesn't recur, so multiplying it by a
+ * duration would invent work nobody agreed to. Everything else rounds to the
+ * nearest whole cycle and never goes below one — "6 months" on an annual line
+ * is one year, because half an annual charge is not a thing that can be billed.
+ */
+export function cyclesForDuration(
+  interval: BillingInterval,
+  coverMonths: number | null | undefined,
+): number {
+  if (interval === "one_off") return 1;
+  if (!coverMonths || !Number.isFinite(coverMonths) || coverMonths <= 0) return 1;
+
+  const months = Math.min(Math.trunc(coverMonths), MAX_COVER_MONTHS);
+  return Math.max(1, Math.round(months / MONTHS_PER_CYCLE[interval]));
+}
+
+/** Line total across a duration = unit × qty × cycles, clamped like the rest. */
+export function periodTotalCents(
+  unitAmountCents: number,
+  quantity: number,
+  periods: number,
+): number {
+  const cycles = Number.isFinite(periods) ? Math.max(Math.trunc(periods), 1) : 1;
+  return Math.min(lineTotalCents(unitAmountCents, quantity) * cycles, MAX_AMOUNT_CENTS);
+}
+
+/** 24 → "2 years", 18 → "18 months", 3 → "3 months". */
+export function formatDuration(months: number): string {
+  if (months <= 0) return "";
+  if (months % 12 === 0) {
+    const years = months / 12;
+    return `${years} year${years === 1 ? "" : "s"}`;
+  }
+  return `${months} month${months === 1 ? "" : "s"}`;
+}
+
+/** "24 monthly charges", "2 annual charges" — how a multiplied line reads. */
+export function formatCycles(interval: BillingInterval, periods: number): string | null {
+  if (interval === "one_off" || periods <= 1) return null;
+  const noun: Record<Exclude<BillingInterval, "one_off">, string> = {
+    weekly: "weekly",
+    monthly: "monthly",
+    quarterly: "quarterly",
+    annually: "annual",
+  };
+  return `${periods} ${noun[interval]} charges`;
+}
+
+/* ---------------------------------------------------------------------------
    Tax (GST)
 
    Three states, and which one applies is a property of the ORG, snapshotted
@@ -381,6 +467,34 @@ export function addInterval(from: Date, interval: BillingInterval): Date | null 
     case "annually":
       return addMonths(from, 12);
   }
+}
+
+/**
+ * The date `count` billing cycles after `from`.
+ *
+ * Measured from the ORIGINAL date in one step, never by applying one cycle at a
+ * time. Stepping compounds the month-end clamp and walks the anchor backwards:
+ * 31 Jan → 28 Feb → 28 Mar → 28 Apr, so a line that starts on the 31st loses
+ * three days a year and eventually bills on the 28th forever. Anchoring gives
+ * 31 Jan + 2 cycles = 31 Mar, which is how every billing system in the world
+ * behaves and what the client expects to see on the invoice.
+ */
+export function addIntervals(
+  from: Date,
+  interval: BillingInterval,
+  count: number,
+): Date | null {
+  if (interval === "one_off") return null;
+  const cycles = Number.isFinite(count) ? Math.max(Math.trunc(count), 1) : 1;
+
+  if (interval === "weekly") {
+    const next = new Date(from);
+    next.setDate(next.getDate() + 7 * cycles);
+    return next;
+  }
+
+  const monthsPerCycle = interval === "monthly" ? 1 : interval === "quarterly" ? 3 : 12;
+  return addMonths(from, monthsPerCycle * cycles);
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { InvoiceDetail } from "@/lib/dal/invoices";
-import { formatMoney, formatTaxRate } from "@/lib/billing";
+import { formatDuration, formatMoney, formatTaxRate } from "@/lib/billing";
 import { formatDate } from "@/lib/utils";
 import { KPVE_LOGO_DATA_URI, LETTERHEAD_BG } from "@/lib/brand/logo";
 import { InvoiceStatusBadge, Money } from "./ui";
@@ -120,6 +120,15 @@ export function InvoiceDocument({
           {invoice.dueDate && (
             <MetaLine label="Due" value={formatDate(invoice.dueDate)} />
           )}
+          {/* Only when the invoice bills more than one cycle. On a plain
+              monthly invoice the per-line period already says it, and a second
+              copy in the header is noise. */}
+          {invoice.coverMonths && invoice.coverStart && invoice.coverEnd && (
+            <MetaLine
+              label="Period"
+              value={`${formatDate(invoice.coverStart)} – ${formatDate(invoice.coverEnd)}`}
+            />
+          )}
           {invoice.poNumber && (
             <MetaLine label="PO number" value={invoice.poNumber} />
           )}
@@ -201,15 +210,20 @@ export function InvoiceDocument({
                     )}
                     {period && (
                       <p className="mt-2 text-xs text-[var(--admin-fg-subtle)]">
+                        {line.periods > 1 ? `${line.periods} × ` : ""}
                         {period}
                       </p>
                     )}
                   </td>
                   {/* A quantity of 1 is the common case; showing the bare "1"
                       in its own column is honest without the "1 ×" noise the
-                      inline formatter deliberately drops. */}
+                      inline formatter deliberately drops.
+
+                      A multi-period line prints "4 × 24" so the arithmetic on
+                      the row still closes: 4 × 24 × $11.00 = $1,056.00. Folding
+                      it into a bare 96 would be shorter and unreadable. */}
                   <td className="px-4 py-4 text-right tabular-nums text-[var(--admin-fg-muted)]">
-                    {line.quantity}
+                    {line.periods > 1 ? `${line.quantity} × ${line.periods}` : line.quantity}
                   </td>
                   <td className="px-4 py-4 text-right tabular-nums text-[var(--admin-fg-muted)]">
                     {formatMoney(line.unitAmountCents, currency)}
@@ -225,6 +239,15 @@ export function InvoiceDocument({
           </tbody>
         </table>
       </section>
+
+      {/* Said once, in words, under the lines: an invoice for eleven hundred
+          dollars against a service the client knows costs forty-four a month
+          needs to explain itself before the reader reaches the total. */}
+      {invoice.coverMonths ? (
+        <p className="pt-4 text-xs text-[var(--admin-fg-muted)]">
+          Billed {formatDuration(invoice.coverMonths)} in advance.
+        </p>
+      ) : null}
 
       {/* Totals — right-aligned, and the one place GST is stated. Which lines
           appear is entirely a function of taxMode, snapshotted at issue. */}

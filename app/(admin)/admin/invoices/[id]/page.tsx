@@ -61,6 +61,7 @@ export default async function InvoiceDetailPage({
         totalCents={invoice.totalCents}
         currency={invoice.currency}
         dueDate={invoice.dueDate}
+        coverMonths={invoice.coverMonths}
         staleFields={drift}
       />
 
