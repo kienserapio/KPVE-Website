@@ -222,9 +222,17 @@ repeats — and you confirm before anything is created. Then you get a link, plu
 > what the client gets charged.
 
 **To charge a longer term — two years up front, say — use "Bill a term…"** on
-the line instead. Pick the span, see the total (`2 × $44/yr · 2 annual charges
-= $176`), and it raises an invoice for the whole amount. Send it and the client
-gets one Pay now for $176, not a subscription.
+the line instead. Pick the span, check the total (`2 × $44/yr · 2 annual charges
+= $176`), and press **Charge $176 — create link**. It raises and sends the
+invoice and hands you the link right there: **Copy link**, **Email it**, done.
+
+The client opens it, sees the invoice, presses Pay now, and pays the whole $176
+as **one card payment** — no subscription, nothing recurring. That link never
+expires, because the Stripe checkout is created at the moment they press Pay,
+not when you sent it.
+
+It becomes a real invoice the instant you press the button, so check the total
+first — a wrong one is voided and reissued, not edited.
 
 The **Billed** dropdown on the line is not where duration lives, and it can't
 be: it's the *cycle length*. Setting it to "2 years" would mean claiming the

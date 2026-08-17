@@ -653,6 +653,17 @@ export const setInvoiceStatusSchema = z.object({
   status: invoiceStatusSchema,
 });
 
+/**
+ * Bill one line for a fixed term and hand back a link to send. One line, not
+ * many: this is raised from that line, and letting it take a list would make it
+ * a second, quietly divergent invoice builder.
+ */
+export const billTermSchema = z.object({
+  clientId: z.string().uuid(),
+  clientServiceId: z.string().uuid(),
+  coverMonths,
+});
+
 /** Re-price a DRAFT for a different duration. Draft-only, enforced in the DAL. */
 export const setInvoiceDurationSchema = z.object({
   invoiceId: z.string().uuid(),

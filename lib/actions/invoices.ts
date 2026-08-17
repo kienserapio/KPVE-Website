@@ -7,12 +7,14 @@ import { requireSession } from "@/lib/dal/session";
 import {
   createInvoiceFromServices,
   deleteInvoice,
+  getInvoice,
   resyncDraftInvoice,
   setInvoiceDuration,
   setInvoiceStatus,
   updateInvoice,
 } from "@/lib/dal/invoices";
 import {
+  billTermSchema,
   createInvoiceSchema,
   setInvoiceDurationSchema,
   setInvoiceStatusSchema,
@@ -148,6 +150,88 @@ export async function updateInvoiceAction(
   }
 
   return { ok: true, error: null };
+}
+
+/* ---------------------------------------------------------------------------
+   Bill a term — one line, a fixed span, and a link to send. In one press.
+
+   The thing staff actually want is not "an invoice object": it is a link they
+   can paste to a client that collects two years now. Every extra step between
+   the intent and that link is a step where the subscription link — which bills
+   one cycle and repeats — looks like the easier answer, and it is the wrong
+   answer. So this creates the invoice, ISSUES it, and returns the client's own
+   link, which is the sendable artifact.
+
+   Why that link and not a raw Stripe URL: a Stripe Checkout Session expires in
+   24 hours. A link emailed on Monday is opened on Thursday. `/invoice/<token>`
+   never expires, is the tax invoice the client needs anyway, and its Pay now
+   mints the Stripe session at the moment they press it — for the full amount.
+
+   It sends immediately, so the amount is confirmed in the UI BEFORE this runs.
+   After it, the invoice is a document: the correction is void-and-reissue.
+--------------------------------------------------------------------------- */
+
+export type BillTermState = {
+  ok: boolean;
+  error: string | null;
+  /** Present on success — everything the panel needs to show the link. */
+  invoice?: {
+    id: string;
+    number: string;
+    publicToken: string;
+    totalCents: number;
+    currency: string;
+  };
+};
+
+export async function billTermAction(
+  _prev: BillTermState,
+  formData: FormData,
+): Promise<BillTermState> {
+  const parsed = billTermSchema.safeParse({
+    clientId: formData.get("clientId"),
+    clientServiceId: formData.get("clientServiceId"),
+    coverMonths: formData.get("coverMonths") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the term and try again." };
+  }
+
+  try {
+    await requireSession();
+
+    const { id } = await createInvoiceFromServices({
+      clientId: parsed.data.clientId,
+      clientServiceIds: [parsed.data.clientServiceId],
+      coverMonths: parsed.data.coverMonths,
+    });
+
+    // Issue it in the same breath. A draft's client link deliberately 404s —
+    // handing back a link that doesn't work yet would be worse than no link.
+    await setInvoiceStatus(id, "sent");
+
+    const invoice = await getInvoice(id);
+    if (!invoice) return { ok: false, error: "The invoice was created but couldn't be read back." };
+
+    revalidatePath(`/admin/clients/${parsed.data.clientId}`);
+    revalidatePath("/admin/invoices");
+
+    return {
+      ok: true,
+      error: null,
+      invoice: {
+        id: invoice.id,
+        number: invoice.number,
+        publicToken: invoice.publicToken,
+        totalCents: invoice.totalCents,
+        currency: invoice.currency,
+      },
+    };
+  } catch (error) {
+    console.error("[billTermAction]", error);
+    return { ok: false, error: mapError(error) };
+  }
 }
 
 /* ---------------------------------------------------------------------------

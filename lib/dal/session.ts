@@ -46,11 +46,23 @@ export const getSession = cache(async (): Promise<SessionStaff | null> => {
   return { id: staff.id, email: staff.email, name: staff.name };
 });
 
-/** Use in pages and layouts. Redirects to login when unauthenticated. */
+/**
+ * Use in pages and layouts. Redirects to login when unauthenticated.
+ *
+ * A cookie that still verifies but no longer resolves to an active account —
+ * the staff member was deactivated or deleted, or the database was restored
+ * from before they existed — needs more than a redirect to /login. proxy.ts
+ * trusts the mere PRESENCE of a cookie and bounces /login → /admin, while this
+ * bounces /admin → /login, and the browser ping-pongs until it gives up. The
+ * only way out is to clear the cookie, which a page cannot do; a route handler
+ * can, so stale sessions are sent through /logout instead.
+ */
 export async function verifySession(): Promise<SessionStaff> {
   const staff = await getSession();
-  if (!staff) redirect("/login");
-  return staff;
+  if (staff) return staff;
+
+  const hasCookie = Boolean((await cookies()).get(SESSION_COOKIE)?.value);
+  redirect(hasCookie ? "/logout" : "/login");
 }
 
 /**

@@ -17,10 +17,7 @@ import {
   revokePaymentLinkAction,
   type PaymentActionState,
 } from "@/lib/actions/payments";
-import {
-  createInvoiceAction,
-  type InvoiceActionState,
-} from "@/lib/actions/invoices";
+import { billTermAction, type BillTermState } from "@/lib/actions/invoices";
 import type { ClientServiceItem, ServiceItem } from "@/lib/dal/services";
 import {
   BILLING_INTERVALS,
@@ -28,6 +25,7 @@ import {
   CURRENCIES,
   DEFAULT_CURRENCY,
   formatMoney,
+  formatDuration,
   formatQuantityLine,
   formatRate,
   INTERVAL_LABELS,
@@ -259,7 +257,12 @@ function ServiceRow({
           clientEmail={clientEmail}
         />
 
-        <BillTerm line={line} clientId={clientId} />
+        <BillTerm
+          line={line}
+          clientId={clientId}
+          clientName={clientName}
+          clientEmail={clientEmail}
+        />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -672,14 +675,25 @@ function PaymentLink({
    the same draft; there is no second way to price a term, only a second door.
 --------------------------------------------------------------------------- */
 
-const invoiceInitialState: InvoiceActionState = { ok: false, error: null };
+const billTermInitialState: BillTermState = { ok: false, error: null };
 
-function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: string }) {
+function BillTerm({
+  line,
+  clientId,
+  clientName,
+  clientEmail,
+}: {
+  line: ClientServiceItem;
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+}) {
   const [state, formAction, pending] = useActionState(
-    createInvoiceAction,
-    invoiceInitialState,
+    billTermAction,
+    billTermInitialState,
   );
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   // A term of one cycle is what the subscription link already does, so this
   // opens on a year — the shortest span anyone comes here to bill.
   const [months, setMonths] = useState<number | null>(12);
@@ -699,6 +713,83 @@ function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: strin
     },
   ];
   const totalCents = durationTotalCents(durationLines, months);
+
+  // Done — the link is the whole point, so it replaces the form rather than
+  // sitting under it. Absolute URL built at click time: the origin is only
+  // knowable in the browser, and reading it during render would mismatch the
+  // server HTML.
+  const issued = state.ok ? state.invoice : undefined;
+  if (issued) {
+    const clientLink = () => `${window.location.origin}/invoice/${issued.publicToken}`;
+
+    async function copy() {
+      try {
+        await navigator.clipboard.writeText(clientLink());
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch {
+        // Clipboard is blocked on insecure origins; the link is on screen too.
+      }
+    }
+
+    function emailIt() {
+      const body =
+        `Hi ${clientName.split(" ")[0] || "there"},\n\n` +
+        `Here's invoice ${issued!.number} for ${line.label} — ` +
+        `${formatMoney(issued!.totalCents, issued!.currency)}, covering ` +
+        `${months ? formatDuration(months) : "the period"}.\n\n` +
+        `View and pay it here:\n${clientLink()}\n\nThanks,\nKPVE`;
+      window.location.href =
+        `mailto:${encodeURIComponent(clientEmail)}` +
+        `?subject=${encodeURIComponent(`Invoice ${issued!.number} — ${line.label}`)}` +
+        `&body=${encodeURIComponent(body)}`;
+    }
+
+    return (
+      <div className="mt-2 flex flex-col gap-2 rounded-lg border border-[var(--admin-accent)]/40 bg-[var(--admin-surface-2)] px-3 py-3">
+        <p className="text-xs text-[var(--admin-fg)]">
+          <strong>{issued.number}</strong> sent —{" "}
+          <Money className="font-semibold">
+            {formatMoney(issued.totalCents, issued.currency)}
+          </Money>
+          {months ? ` for ${formatDuration(months)}` : ""}. Send this link:
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-md border border-[var(--admin-border)] bg-[var(--admin-surface)] px-2 py-1.5 text-[11px] text-[var(--admin-fg-muted)]">
+            /invoice/{issued.publicToken}
+          </code>
+          <button
+            type="button"
+            onClick={copy}
+            className="rounded-lg bg-[var(--admin-accent)] px-2.5 py-1.5 text-xs font-semibold text-[var(--admin-accent-fg)] transition hover:brightness-110"
+          >
+            {copied ? "Copied" : "Copy link"}
+          </button>
+          <button
+            type="button"
+            onClick={emailIt}
+            className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface)] hover:text-[var(--admin-fg)]"
+          >
+            Email it
+          </button>
+          <a
+            href={`/admin/invoices/${issued.id}`}
+            className="rounded-lg px-2 py-1.5 text-xs text-[var(--admin-fg-subtle)] transition hover:text-[var(--admin-fg)]"
+          >
+            Open invoice
+          </a>
+        </div>
+
+        <p className="text-[11px] text-[var(--admin-fg-subtle)]">
+          The client sees the invoice and pays the whole{" "}
+          {formatMoney(issued.totalCents, issued.currency)} in one card payment.
+          This link never expires — the Stripe checkout is created when they press
+          Pay now.
+        </p>
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -720,13 +811,14 @@ function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: strin
       className="mt-2 flex flex-col gap-2.5 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-3 py-3"
     >
       <input type="hidden" name="clientId" value={clientId} />
-      <input type="hidden" name="clientServiceIds" value={line.id} />
+      <input type="hidden" name="clientServiceId" value={line.id} />
       <input type="hidden" name="coverMonths" value={months ?? ""} />
 
       <p className="text-[11px] leading-relaxed text-[var(--admin-fg-muted)]">
-        Charge several cycles up front as <strong>one payment</strong>. The rate
-        on this line doesn&apos;t change — {formatRate(line.amountCents, line.currency, line.interval)}{" "}
-        stays what it is, and the next bill date moves to the end of the term.
+        Charge several cycles up front as <strong>one payment</strong>, and get a
+        link to send. The rate on this line doesn&apos;t change —{" "}
+        {formatRate(line.amountCents, line.currency, line.interval)} stays what it
+        is, and the next bill date moves to the end of the term once they pay.
       </p>
 
       <DurationPicker id={`term-${line.id}`} months={months} onChange={setMonths} />
@@ -740,7 +832,7 @@ function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: strin
         >
           {pending
             ? "Creating invoice"
-            : `Create invoice — ${formatMoney(totalCents, line.currency)}`}
+            : `Charge ${formatMoney(totalCents, line.currency)} — create link`}
         </button>
         <button
           type="button"
@@ -757,8 +849,9 @@ function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: strin
       </div>
 
       <p className="text-[11px] text-[var(--admin-fg-subtle)]">
-        Lands on a draft so you can check it, then Send gives the client a Pay
-        now button for the full amount.
+        Raises and sends the invoice, then gives you the link. It becomes a
+        record at that point — a wrong one is voided and reissued, so check the
+        total above first.
       </p>
     </form>
   );
