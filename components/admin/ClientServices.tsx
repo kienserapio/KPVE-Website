@@ -17,6 +17,10 @@ import {
   revokePaymentLinkAction,
   type PaymentActionState,
 } from "@/lib/actions/payments";
+import {
+  createInvoiceAction,
+  type InvoiceActionState,
+} from "@/lib/actions/invoices";
 import type { ClientServiceItem, ServiceItem } from "@/lib/dal/services";
 import {
   BILLING_INTERVALS,
@@ -45,6 +49,11 @@ import {
   SERVICE_STATUSES,
   ServiceStatusBadge,
 } from "./ui";
+import {
+  DurationBreakdown,
+  DurationPicker,
+  durationTotalCents,
+} from "./DurationPicker";
 
 const initialState: ServiceActionState = { ok: false, error: null };
 
@@ -249,6 +258,8 @@ function ServiceRow({
           clientName={clientName}
           clientEmail={clientEmail}
         />
+
+        <BillTerm line={line} clientId={clientId} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -592,11 +603,10 @@ function PaymentLink({
               that carries a duration. */}
           {line.interval !== "one_off" && (
             <p className="rounded-md border border-[var(--admin-border)] bg-[var(--admin-surface)] px-2.5 py-2 text-[11px] leading-relaxed text-[var(--admin-fg-muted)]">
-              A payment link always bills <strong>one cycle</strong>. To charge a
-              fixed period up front — two years, say — raise an{" "}
-              <strong>invoice</strong> in the Invoices card below and set{" "}
-              <strong>Bill for</strong>. Its Pay now button takes the whole amount
-              in a single payment.
+              A subscription link always bills <strong>one cycle</strong>, then
+              repeats. To charge a fixed period up front — two years, say — cancel
+              this and use <strong>Bill a term</strong> just below: it raises an
+              invoice for the whole amount, taken in a single payment.
             </p>
           )}
 
@@ -643,6 +653,114 @@ function PaymentLink({
         </div>
       )}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Bill a term — charge several cycles up front, from the line itself.
+
+   The duration of a charge belongs to the INVOICE, not to this line: the line
+   says $44 per domain per year and must keep saying it, or the rate is wrong,
+   the MRR is wrong and next year's renewal is wrong. Two years is two cycles of
+   that rate collected at once, which is a property of the bill, not the deal.
+
+   That distinction is correct and it is also invisible from here, which is worse
+   than useless — staff wanting to bill two years arrive at this line, find a
+   "Billed" dropdown with no such option, and reach for the subscription link,
+   which quietly charges one year. So the invoice builder's duration control is
+   brought TO the line. It posts to the same action the builder does and lands on
+   the same draft; there is no second way to price a term, only a second door.
+--------------------------------------------------------------------------- */
+
+const invoiceInitialState: InvoiceActionState = { ok: false, error: null };
+
+function BillTerm({ line, clientId }: { line: ClientServiceItem; clientId: string }) {
+  const [state, formAction, pending] = useActionState(
+    createInvoiceAction,
+    invoiceInitialState,
+  );
+  const [open, setOpen] = useState(false);
+  // A term of one cycle is what the subscription link already does, so this
+  // opens on a year — the shortest span anyone comes here to bill.
+  const [months, setMonths] = useState<number | null>(12);
+
+  // A one-off has no cycle to multiply; "bill it twice" is not a duration, it's
+  // a second sale. Cancelled lines aren't billed at all.
+  if (line.interval === "one_off" || line.status === "cancelled") return null;
+
+  const durationLines = [
+    {
+      id: line.id,
+      label: line.label,
+      unitAmountCents: line.unitAmountCents || line.amountCents,
+      quantity: line.quantity || 1,
+      currency: line.currency,
+      interval: line.interval,
+    },
+  ];
+  const totalCents = durationTotalCents(durationLines, months);
+
+  if (!open) {
+    return (
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
+        >
+          Bill a term…
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      action={formAction}
+      className="mt-2 flex flex-col gap-2.5 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface-2)] px-3 py-3"
+    >
+      <input type="hidden" name="clientId" value={clientId} />
+      <input type="hidden" name="clientServiceIds" value={line.id} />
+      <input type="hidden" name="coverMonths" value={months ?? ""} />
+
+      <p className="text-[11px] leading-relaxed text-[var(--admin-fg-muted)]">
+        Charge several cycles up front as <strong>one payment</strong>. The rate
+        on this line doesn&apos;t change — {formatRate(line.amountCents, line.currency, line.interval)}{" "}
+        stays what it is, and the next bill date moves to the end of the term.
+      </p>
+
+      <DurationPicker id={`term-${line.id}`} months={months} onChange={setMonths} />
+      <DurationBreakdown lines={durationLines} months={months} />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-lg bg-[var(--admin-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--admin-accent-fg)] transition hover:brightness-110 disabled:opacity-60"
+        >
+          {pending
+            ? "Creating invoice"
+            : `Create invoice — ${formatMoney(totalCents, line.currency)}`}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="text-xs text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
+        >
+          Cancel
+        </button>
+        {state.error && (
+          <span role="alert" className="text-xs text-red-500">
+            {state.error}
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-[var(--admin-fg-subtle)]">
+        Lands on a draft so you can check it, then Send gives the client a Pay
+        now button for the full amount.
+      </p>
+    </form>
   );
 }
 
@@ -991,6 +1109,14 @@ function EditServiceForm({
               </option>
             ))}
           </select>
+          {/* The question this field gets asked and cannot answer. Billing two
+              years is two annual cycles, not a cycle of its own — putting it in
+              here would mean claiming the rate is $88 per two years, which
+              halves the MRR and gets next renewal wrong. */}
+          <p className="mt-1 text-[11px] text-[var(--admin-fg-subtle)]">
+            How often it recurs. To charge a longer term up front, close this and
+            use <strong>Bill a term</strong> on the line.
+          </p>
         </div>
         <div>
           <AdminLabel htmlFor={`status-edit-${line.id}`}>Status</AdminLabel>

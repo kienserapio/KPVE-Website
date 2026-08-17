@@ -217,10 +217,19 @@ repeats — and you confirm before anything is created. Then you get a link, plu
 - **Revoke** — kills the link
 
 > **A link off a billing line always bills ONE cycle.** On a $88/year line it
-> takes $88 now and $88 every year after, until cancelled. There is no way to
-> tell it "two years" — that's what an **invoice** is for (7b below). Editing the
-> next bill date doesn't change it either; that field is only the CRM's reminder,
-> not what the client gets charged.
+> takes $88 now and $88 every year after, until cancelled. Editing the next bill
+> date doesn't change that either; that field is only the CRM's reminder, not
+> what the client gets charged.
+
+**To charge a longer term — two years up front, say — use "Bill a term…"** on
+the line instead. Pick the span, see the total (`2 × $44/yr · 2 annual charges
+= $176`), and it raises an invoice for the whole amount. Send it and the client
+gets one Pay now for $176, not a subscription.
+
+The **Billed** dropdown on the line is not where duration lives, and it can't
+be: it's the *cycle length*. Setting it to "2 years" would mean claiming the
+rate is $88 per two years, which halves the MRR and gets the next renewal wrong.
+The rate stays $44/domain/year; the *bill* covers two of them.
 
 When the client pays, everything happens by itself:
 
@@ -409,11 +418,17 @@ A weekly charge is counted as 52/12 per month, not ×4. There are 52 weeks in a
 year, not 48 — "×4" would under-report weekly revenue by 8%.
 
 **"I wanted to bill 2 years and Stripe only showed 1."**
-You used the **link on the billing line**. That always bills one cycle and then
-repeats — it has no idea what "2 years" is. Raise an **invoice** on that line
-with **Bill for → 2 years** instead; the client's Pay now takes the whole amount
-in one payment. Pushing the next bill date out to 2028 doesn't do it either —
-that field only moves the CRM's reminder, not the charge.
+You used the **Subscription link**. That always bills one cycle and then repeats.
+Use **Bill a term…** on the same line instead — pick 2 years, it raises the
+invoice for $176, and the client's Pay now takes it in one payment. Pushing the
+next bill date out to 2028 doesn't do it either; that field only moves the CRM's
+reminder, not the charge.
+
+**"There's no '2 years' in the Billed dropdown."**
+Correct — that's the *cycle length*, not the duration of a bill. Two years is two
+annual cycles paid at once, which belongs to the invoice, not to the arrangement.
+Putting it on the line would mean the rate is $88 per two years, which halves
+your MRR and gets the 2028 renewal wrong. Use **Bill a term…**.
 
 **"I typed 2 in the custom duration and got one year."**
 The box next to it was set to **months**. Two months on an annual line rounds to
