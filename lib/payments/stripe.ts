@@ -47,6 +47,28 @@ const STRIPE_RECURRING: Record<
   annually: { interval: "year", interval_count: 1 },
 };
 
+/**
+ * A term multiplies the billing period: `annually` with a term of 2 is Stripe's
+ * `{ interval: "year", interval_count: 2 }`, a real subscription that charges
+ * once every two years. This is the whole point of the field — the alternative
+ * was a yearly subscription for a two-year registration.
+ *
+ * Stripe caps a billing period at three years. lib/billing.ts clamps terms to
+ * the same limit on the way in, so this should never bind; it is here because
+ * a rejected session at checkout time is a far worse place to find out.
+ */
+const STRIPE_MAX_COUNT: Record<string, number> = { week: 156, month: 36, year: 3 };
+
+function stripeRecurring(interval: Exclude<BillingInterval, "one_off">, term: number) {
+  const base = STRIPE_RECURRING[interval];
+  const cycles = Number.isFinite(term) && term >= 1 ? Math.trunc(term) : 1;
+  const count = base.interval_count * cycles;
+  return {
+    interval: base.interval,
+    interval_count: Math.min(count, STRIPE_MAX_COUNT[base.interval] ?? count),
+  };
+}
+
 /* ---------------------------------------------------------------------------
    Form encoding
 
@@ -129,7 +151,7 @@ export class StripePaymentProvider implements PaymentProvider {
     const recurring =
       request.invoiceId || request.interval === "one_off"
         ? undefined
-        : STRIPE_RECURRING[request.interval];
+        : stripeRecurring(request.interval, request.termCount ?? 1);
 
     // Our ids travel with the session so the webhook can find the billing line
     // without trusting anything in the URL. For a subscription they go on the

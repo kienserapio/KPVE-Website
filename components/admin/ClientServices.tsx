@@ -31,8 +31,11 @@ import {
   INTERVAL_LABELS,
   INTERVAL_NOUN,
   INTERVAL_SUFFIX,
+  clampTerm,
+  formatTerm,
   lineTotalCents,
   MAX_QUANTITY,
+  MAX_TERM,
   parseAmountToCents,
 } from "@/lib/billing";
 import type { BillingInterval } from "@/lib/db/schema";
@@ -55,6 +58,15 @@ import {
 
 const initialState: ServiceActionState = { ok: false, error: null };
 
+/** The noun beside the "Bill every" number, per interval. */
+const TERM_UNIT_LABEL: Record<BillingInterval, string> = {
+  one_off: "",
+  weekly: "week(s)",
+  monthly: "month(s)",
+  quarterly: "quarter(s)",
+  annually: "year(s)",
+};
+
 const selectClass =
   "w-full rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2.5 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25";
 
@@ -76,18 +88,27 @@ function totalPreview(
   quantityInput: string,
   currency: string,
   interval: BillingInterval,
+  termInput = "1",
 ): string | null {
   const unitCents = parseAmountToCents(unitInput);
   if (unitCents === null) return null;
 
   const quantity = Number(quantityInput);
-  const totalCents = lineTotalCents(unitCents, quantity);
+  const qty = Number.isFinite(quantity) ? Math.max(Math.trunc(quantity), 1) : 1;
+  const term = clampTerm(interval, Number(termInput));
+  const totalCents = lineTotalCents(unitCents, qty, term);
 
-  return (
-    `${formatMoney(unitCents, currency, { alwaysCents: true })} × ` +
-    `${Number.isFinite(quantity) ? Math.max(Math.trunc(quantity), 1) : 1} = ` +
-    `${formatMoney(totalCents, currency, { alwaysCents: true })}${INTERVAL_SUFFIX[interval]}`
-  );
+  const money = (cents: number) => formatMoney(cents, currency, { alwaysCents: true });
+
+  // At a term of 1 this is the line it has always been. Above it, the years are
+  // shown as their own factor rather than folded into the unit price — the
+  // whole point is that $44 a year per domain stays visible on a $176 charge.
+  const sum =
+    term > 1
+      ? `${money(unitCents)} × ${qty} × ${term} = ${money(totalCents)} every ${formatTerm(interval, term)}`
+      : `${money(unitCents)} × ${qty} = ${money(totalCents)}${INTERVAL_SUFFIX[interval]}`;
+
+  return sum;
 }
 
 function TotalPreview({ value }: { value: string | null }) {
@@ -220,11 +241,19 @@ function ServiceRow({
               unitLabel,
             )}
           </Money>
-          {line.quantity > 1 && (
+          {/* On a term line the charge is neither the unit rate nor "×qty at
+              that rate" — it is both, times the years. Showing the charge is
+              what stops anyone reading "$44/yr × 2" as $88 a year. */}
+          {(line.quantity > 1 || (line.termCount ?? 1) > 1) && (
             <span>
               ·{" "}
               <Money muted className="font-medium">
-                {formatRate(line.amountCents, line.currency, line.interval)}
+                {formatRate(
+                  line.amountCents,
+                  line.currency,
+                  line.interval,
+                  line.termCount,
+                )}
               </Money>
             </span>
           )}
@@ -586,10 +615,14 @@ function PaymentLink({
               <span className="text-sm text-[var(--admin-fg-muted)]">
                 {line.interval === "one_off"
                   ? "once"
-                  : `now, then again every ${INTERVAL_NOUN[line.interval]} until cancelled`}
+                  : `now, then again every ${
+                      (line.termCount ?? 1) > 1
+                        ? formatTerm(line.interval, line.termCount)
+                        : INTERVAL_NOUN[line.interval]
+                    } until cancelled`}
               </span>
             </p>
-            {line.quantity > 1 && (
+            {(line.quantity > 1 || (line.termCount ?? 1) > 1) && (
               <p className="mt-0.5 text-[11px] text-[var(--admin-fg-subtle)]">
                 {formatQuantityLine(
                   line.unitAmountCents,
@@ -597,6 +630,9 @@ function PaymentLink({
                   line.currency,
                   line.interval,
                 )}
+                {(line.termCount ?? 1) > 1
+                  ? ` × ${formatTerm(line.interval, line.termCount)}`
+                  : ""}
               </p>
             )}
           </div>
@@ -606,10 +642,22 @@ function PaymentLink({
               that carries a duration. */}
           {line.interval !== "one_off" && (
             <p className="rounded-md border border-[var(--admin-border)] bg-[var(--admin-surface)] px-2.5 py-2 text-[11px] leading-relaxed text-[var(--admin-fg-muted)]">
-              A subscription link always bills <strong>one cycle</strong>, then
-              repeats. To charge a fixed period up front — two years, say — cancel
-              this and use <strong>Bill a term</strong> just below: it raises an
-              invoice for the whole amount, taken in a single payment.
+              {(line.termCount ?? 1) > 1 ? (
+                <>
+                  This is a <strong>recurring</strong> subscription: it takes the
+                  full {formatTerm(line.interval, line.termCount)} now and again
+                  every {formatTerm(line.interval, line.termCount)} until
+                  cancelled. For a single charge that does not repeat, use{" "}
+                  <strong>Bill a term</strong> below instead.
+                </>
+              ) : (
+                <>
+                  A subscription link always bills <strong>one cycle</strong>, then
+                  repeats. To charge a longer period, set <strong>Bill every</strong>{" "}
+                  on the line (Edit) — or use <strong>Bill a term</strong> below for
+                  a one-time charge that doesn&apos;t recur.
+                </>
+              )}
             </p>
           )}
 
@@ -710,6 +758,7 @@ function BillTerm({
       quantity: line.quantity || 1,
       currency: line.currency,
       interval: line.interval,
+      termCount: line.termCount,
     },
   ];
   const totalCents = durationTotalCents(durationLines, months);
@@ -908,6 +957,7 @@ function AddServiceForm({
   const [label, setLabel] = useState("");
   const [unitAmount, setUnitAmount] = useState("");
   const [quantity, setQuantity] = useState("1");
+  const [termCount, setTermCount] = useState("1");
   const [unitLabel, setUnitLabel] = useState<string | null>(null);
   const [currency, setCurrency] = useState<string>(DEFAULT_CURRENCY);
   const [interval, setInterval] = useState<BillingInterval>("monthly");
@@ -931,7 +981,7 @@ function AddServiceForm({
   }
 
   const active = catalogue.filter((s) => s.isActive);
-  const preview = totalPreview(unitAmount, quantity, currency, interval);
+  const preview = totalPreview(unitAmount, quantity, currency, interval, termCount);
 
   return (
     <form
@@ -1042,6 +1092,32 @@ function AddServiceForm({
             ))}
           </select>
         </div>
+        {/* The years multiplier. A two-year domain registration recurs — just
+            not yearly — and this is the only field that can say so. It extends
+            the CYCLE and multiplies the charge; the rate per unit per interval
+            is untouched, so MRR doesn't move. Hidden on a one-off, which has no
+            cycle to repeat. */}
+        {interval !== "one_off" && (
+          <div>
+            <AdminLabel htmlFor="termCount">Bill every</AdminLabel>
+            <div className="flex items-center gap-2">
+              <AdminInput
+                id="termCount"
+                name="termCount"
+                type="number"
+                min={1}
+                max={MAX_TERM[interval]}
+                step={1}
+                value={termCount}
+                onChange={(e) => setTermCount(e.target.value)}
+                className="w-20"
+              />
+              <span className="whitespace-nowrap text-sm text-[var(--admin-fg-muted)]">
+                {TERM_UNIT_LABEL[interval]}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <TotalPreview value={preview} />
@@ -1118,6 +1194,7 @@ function EditServiceForm({
   // which has to move as they're typed or it isn't a preview of anything.
   const [unitAmount, setUnitAmount] = useState(centsToInput(line.unitAmountCents));
   const [quantity, setQuantity] = useState(String(line.quantity));
+  const [termCount, setTermCount] = useState(String(line.termCount || 1));
   const [currency, setCurrency] = useState(line.currency);
   const [interval, setInterval] = useState<BillingInterval>(line.interval);
 
@@ -1126,7 +1203,7 @@ function EditServiceForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.ok]);
 
-  const preview = totalPreview(unitAmount, quantity, currency, interval);
+  const preview = totalPreview(unitAmount, quantity, currency, interval, termCount);
 
   return (
     <form
@@ -1202,15 +1279,33 @@ function EditServiceForm({
               </option>
             ))}
           </select>
-          {/* The question this field gets asked and cannot answer. Billing two
-              years is two annual cycles, not a cycle of its own — putting it in
-              here would mean claiming the rate is $88 per two years, which
-              halves the MRR and gets next renewal wrong. */}
-          <p className="mt-1 text-[11px] text-[var(--admin-fg-subtle)]">
-            How often it recurs. To charge a longer term up front, close this and
-            use <strong>Bill a term</strong> on the line.
-          </p>
         </div>
+        {/* The years multiplier. A two-year domain registration recurs — just
+            not yearly — and this is the only field that can say so. It extends
+            the CYCLE and multiplies the charge; the rate per unit per interval
+            is untouched, so the MRR doesn't move. Hidden on a one-off, which
+            has no cycle to repeat. */}
+        {interval !== "one_off" && (
+          <div>
+            <AdminLabel htmlFor={`termCount-${line.id}`}>Bill every</AdminLabel>
+            <div className="flex items-center gap-2">
+              <AdminInput
+                id={`termCount-${line.id}`}
+                name="termCount"
+                type="number"
+                min={1}
+                max={MAX_TERM[interval]}
+                step={1}
+                value={termCount}
+                onChange={(e) => setTermCount(e.target.value)}
+                className="w-20"
+              />
+              <span className="whitespace-nowrap text-sm text-[var(--admin-fg-muted)]">
+                {TERM_UNIT_LABEL[interval]}
+              </span>
+            </div>
+          </div>
+        )}
         <div>
           <AdminLabel htmlFor={`status-edit-${line.id}`}>Status</AdminLabel>
           <select

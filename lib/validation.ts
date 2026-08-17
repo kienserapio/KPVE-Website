@@ -355,6 +355,30 @@ const optionalQuantity = z
   .optional();
 
 /**
+ * How many cycles each charge covers — 2 on an annual line is "every 2 years".
+ *
+ * The upper bound here is deliberately loose (the widest any interval allows);
+ * the real ceiling depends on the interval and is applied by clampTerm() on the
+ * DAL write path, because Stripe's three-year billing limit is 3 on an annual
+ * line and 36 on a monthly one. Validating the shape here and the meaning there
+ * keeps one interval-aware rule instead of two that can disagree.
+ */
+const termValue = z.coerce
+  .number()
+  .int("Bill every must be a whole number")
+  .min(1, "Bill every must be at least 1")
+  .max(156, "That term is longer than a subscription can run");
+
+export const termSchema = termValue.default(1);
+
+/** The same bounds without the default — a partial update may say nothing. */
+const optionalTerm = z
+  .union([z.literal(""), z.null(), z.undefined()])
+  .transform(() => undefined)
+  .or(termValue)
+  .optional();
+
+/**
  * "" → undefined; "YYYY-MM-DD" (a date input) → local midnight on that day.
  * The explicit time matters: `new Date("2026-07-23")` is parsed as UTC, which
  * lands on the 22nd for anyone west of Greenwich.
@@ -409,6 +433,7 @@ export const createClientServiceSchema = z.object({
    */
   unitAmount: amountToCents,
   quantity: quantitySchema,
+  termCount: termSchema,
   currency: currencySchema,
   interval: billingIntervalSchema,
   status: clientServiceStatusSchema.default("active"),
@@ -489,6 +514,7 @@ export const updateClientServiceSchema = z.object({
   unitAmount: amountToCents.optional(),
   /** Optional here, unlike on create — see optionalQuantity. */
   quantity: optionalQuantity,
+  termCount: optionalTerm,
   /** Non-defaulting on purpose — see optionalCurrency. */
   currency: optionalCurrency,
   interval: billingIntervalSchema.optional(),

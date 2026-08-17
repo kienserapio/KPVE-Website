@@ -47,6 +47,8 @@ type BuilderLine = {
   amountCents: number;
   currency: string;
   interval: BillingInterval;
+  /** Cycles per charge — a two-year line invoices two years per charge. */
+  termCount: number;
   status: ClientServiceStatus;
 };
 
@@ -194,6 +196,7 @@ function NewInvoiceForm({
     quantity: line.quantity || 1,
     currency: line.currency,
     interval: line.interval,
+    termCount: line.termCount,
   }));
   const previewCents = durationTotalCents(durationLines, coverMonths);
   const previewCurrency = checkedLines[0]?.currency ?? "AUD";

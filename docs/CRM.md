@@ -215,6 +215,17 @@ draft  →  Send  →  sent  →  Paid | Void        (transitions enforced in th
   provisioned items are frozen onto the invoice at issue. Editing a sent invoice is refused;
   it's void-and-reissue, which is how invoices work. Only a **draft** is editable or deletable
   (deleting an issued one would punch a hole in the number sequence).
+- **Term** (`client_services.term_count`) — how many `interval` cycles ONE CHARGE
+  covers. A domain registered for two years recurs, just not yearly, and neither
+  "annually" nor "one-off" could say so. It EXTENDS THE CYCLE rather than changing
+  the rate: `amount_cents = unit × quantity × term_count` is the amount of one
+  charge, the effective cycle is `interval × term_count`, and it becomes Stripe's
+  `interval_count` — a genuine every-two-years subscription, not a yearly one.
+  MRR therefore divides by it (all **three** copies of the rule: `monthlyCents()`,
+  the SQL in `lib/dal/clients.ts`, and `scripts/snapshot-revenue.ts`), because
+  $176 every two years *is* $88 a year *is* $7.33 a month — collecting early is
+  cash flow, not a bigger deal. Clamped by `clampTerm()` to Stripe's three-year
+  billing-period ceiling, which differs per interval: 3 on annual, 36 on monthly.
 - **Duration** (`invoices.cover_months`, `invoice_lines.periods`). An invoice can bill
   more than one cycle: pick "2 years" (or any custom number of months) in the builder and
   each recurring line is multiplied by however many of ITS cycles fit — 24 on a monthly

@@ -134,6 +134,10 @@ const openTasksExpr = sql<number>`(
  * The interval factors mirror lib/billing.ts — weekly is 52/12, not 4, and
  * one-offs are excluded because they are booked revenue, not recurring.
  * Computed in SQL so the list page stays one query instead of N+1.
+ *
+ * `term_count` divides out for the same reason it does in monthlyCents(): a
+ * line billed $176 every two years is $88 a year is $7.33 a month. Dropping it
+ * here would double the reported MRR of every prepaid line.
  */
 const mrrCentsExpr = sql<number>`(
   select coalesce(round(sum(
@@ -143,7 +147,7 @@ const mrrCentsExpr = sql<number>`(
       when 'quarterly' then ${clientServices.amountCents} / 3.0
       when 'annually'  then ${clientServices.amountCents} / 12.0
       else 0
-    end
+    end / greatest(${clientServices.termCount}, 1)
   )), 0)::int
   from ${clientServices}
   where ${clientServices.clientId} = ${clients.id}

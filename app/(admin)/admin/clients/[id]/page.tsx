@@ -302,6 +302,7 @@ export default async function ClientDetailPage({
                   label: s.label,
                   unitAmountCents: s.unitAmountCents,
                   quantity: s.quantity,
+                  termCount: s.termCount,
                   amountCents: s.amountCents,
                   currency: s.currency,
                   interval: s.interval,

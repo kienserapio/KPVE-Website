@@ -42,6 +42,8 @@ export type DurationLine = {
   currency: string;
   /** Null when the billing line behind an invoice line has been deleted. */
   interval: BillingInterval | null;
+  /** Cycles per charge on that line. Absent means 1. */
+  termCount?: number | null;
 };
 
 type Unit = "months" | "years";
@@ -173,7 +175,9 @@ export function DurationBreakdown({
   const mixed = new Set(lines.map((line) => line.currency.toUpperCase())).size > 1;
 
   const priced = lines.map((line) => {
-    const cycles = line.interval ? cyclesForDuration(line.interval, months) : 1;
+    const cycles = line.interval
+      ? cyclesForDuration(line.interval, months, line.termCount ?? 1)
+      : 1;
     return {
       ...line,
       cycles,
@@ -242,7 +246,7 @@ export function durationTotalCents(lines: DurationLine[], months: number | null)
       periodTotalCents(
         line.unitAmountCents,
         line.quantity,
-        line.interval ? cyclesForDuration(line.interval, months) : 1,
+        line.interval ? cyclesForDuration(line.interval, months, line.termCount ?? 1) : 1,
       ),
     0,
   );

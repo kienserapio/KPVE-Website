@@ -31,11 +31,20 @@ export type CheckoutRequest = {
   label: string;
   /** The whole line's price — unitAmountCents × quantity. Kept for the mock. */
   amountCents: number;
-  /** Price of one, so Stripe can itemise "4 × $11" instead of "1 × $44". */
+  /**
+   * Price of one FOR ONE CHARGE, so Stripe can itemise "4 × $11" instead of
+   * "1 × $44". On a two-year line this is the two-year price of one domain —
+   * `unit × term` — because that is what the client is charged each time.
+   */
   unitAmountCents: number;
   quantity: number;
   currency: string;
   interval: BillingInterval;
+  /**
+   * Cycles per charge. Becomes Stripe's `interval_count`, turning an annual
+   * subscription into a genuine every-two-years one.
+   */
+  termCount?: number;
   clientName: string;
   clientEmail: string;
   /** Existing provider customer id, so a repeat client isn't duplicated there. */

@@ -77,19 +77,61 @@ const MONTHLY_FACTOR: Record<BillingInterval, number> = {
   annually: 1 / 12,
 };
 
-/** Monthly-equivalent value of one line, in cents. */
-export function monthlyCents(amountCents: number, interval: BillingInterval): number {
-  return Math.round(amountCents * MONTHLY_FACTOR[interval]);
+/**
+ * Monthly-equivalent value of one line, in cents.
+ *
+ * `term` is how many cycles each charge covers, and it divides out: a line
+ * billed $176 every two years is worth the same per month as $88 every year,
+ * because it IS $88 a year — paid in one go. Collecting early is cash flow, not
+ * revenue. Getting this wrong would double the MRR of every prepaid line.
+ */
+export function monthlyCents(
+  amountCents: number,
+  interval: BillingInterval,
+  term = 1,
+): number {
+  return Math.round((amountCents * MONTHLY_FACTOR[interval]) / safeTerm(term));
 }
 
-export function annualCents(amountCents: number, interval: BillingInterval): number {
-  return monthlyCents(amountCents, interval) * 12;
+export function annualCents(
+  amountCents: number,
+  interval: BillingInterval,
+  term = 1,
+): number {
+  return monthlyCents(amountCents, interval, term) * 12;
+}
+
+/** A term is a whole number of cycles, at least one. Bad input means one. */
+export function safeTerm(term: number | null | undefined): number {
+  return Number.isFinite(term) && (term as number) >= 1 ? Math.trunc(term as number) : 1;
+}
+
+/**
+ * The longest term each interval can carry.
+ *
+ * Set by Stripe, not by us: a subscription's billing period cannot exceed three
+ * years. Allowing 5 here would produce a line the CRM believes in and the
+ * payment link refuses to create, which is the worst place to discover a limit.
+ */
+export const MAX_TERM: Record<BillingInterval, number> = {
+  one_off: 1, // nothing recurs; a term would be meaningless
+  weekly: 156,
+  monthly: 36,
+  quarterly: 12,
+  annually: 3,
+};
+
+/** Clamp a term to what its interval can actually carry. */
+export function clampTerm(interval: BillingInterval, term: number): number {
+  return Math.min(safeTerm(term), MAX_TERM[interval]);
 }
 
 export type BillableLine = {
   amountCents: number;
   currency: string;
   interval: BillingInterval;
+  /** Cycles per charge. Absent means 1 — every line written before terms. */
+  termCount?: number;
 };
 
 export type CurrencyTotal = {
@@ -117,7 +159,7 @@ export function summarize(lines: BillableLine[]): CurrencyTotal[] {
     if (line.interval === "one_off") {
       total.oneOffCents += line.amountCents;
     } else {
-      total.mrrCents += monthlyCents(line.amountCents, line.interval);
+      total.mrrCents += monthlyCents(line.amountCents, line.interval, line.termCount);
     }
     total.lines += 1;
     byCurrency.set(currency, total);
@@ -169,13 +211,40 @@ export function formatMoney(
   }).format(cents / 100);
 }
 
-/** "$11/mo" — the way a line reads inside a table row. */
+/**
+ * "$11/mo", or "$176 every 2 years" once a term is in play.
+ *
+ * The compact suffix only works at a term of one: "/yr" on a two-year line
+ * would say the client pays it annually, which is the single most expensive
+ * thing this file could get wrong.
+ */
 export function formatRate(
   cents: number,
   currency: string,
   interval: BillingInterval,
+  term = 1,
 ): string {
-  return `${formatMoney(cents, currency)}${INTERVAL_SUFFIX[interval]}`;
+  const cycles = safeTerm(term);
+  if (cycles <= 1 || interval === "one_off") {
+    return `${formatMoney(cents, currency)}${INTERVAL_SUFFIX[interval]}`;
+  }
+  return `${formatMoney(cents, currency)} every ${formatTerm(interval, cycles)}`;
+}
+
+/** "2 years", "18 months", "6 weeks" — the length of one charge's cycle. */
+export function formatTerm(interval: BillingInterval, term: number): string {
+  const cycles = safeTerm(term);
+  if (interval === "one_off") return "";
+
+  // Quarters read as months; nobody says "every 4 quarters".
+  const months = interval === "quarterly" ? cycles * 3 : cycles;
+  if (interval === "weekly") return `${cycles} week${cycles === 1 ? "" : "s"}`;
+  if (interval === "annually") return `${cycles} year${cycles === 1 ? "" : "s"}`;
+  if (months % 12 === 0) {
+    const years = months / 12;
+    return `${years} year${years === 1 ? "" : "s"}`;
+  }
+  return `${months} month${months === 1 ? "" : "s"}`;
 }
 
 /* ---------------------------------------------------------------------------
@@ -219,15 +288,23 @@ export function centsToInput(cents: number): string {
  */
 export const MAX_QUANTITY = 9999;
 
-/** Line total = unit × qty, clamped so a bad input can't produce a bad row. */
-export function lineTotalCents(unitAmountCents: number, quantity: number): number {
+/**
+ * Line total = unit × qty × term, clamped so a bad input can't produce a bad
+ * row. This is the amount of ONE CHARGE: at a term of 2 on an annual line it is
+ * what the client pays every two years, not what they pay in a year.
+ */
+export function lineTotalCents(
+  unitAmountCents: number,
+  quantity: number,
+  term = 1,
+): number {
   // Coerce first: a quantity arriving as "" or NaN means one of the thing,
   // never zero — a line worth nothing is not what anyone typed.
   const qty = Number.isFinite(quantity) ? Math.trunc(quantity) : 1;
   const safeQty = Math.min(Math.max(qty, 1), MAX_QUANTITY);
   const unit = Number.isFinite(unitAmountCents) ? Math.max(Math.trunc(unitAmountCents), 0) : 0;
 
-  return Math.min(unit * safeQty, MAX_AMOUNT_CENTS);
+  return Math.min(unit * safeQty * safeTerm(term), MAX_AMOUNT_CENTS);
 }
 
 /* ---------------------------------------------------------------------------
@@ -276,12 +353,27 @@ const MONTHS_PER_CYCLE: Record<Exclude<BillingInterval, "one_off">, number> = {
 export function cyclesForDuration(
   interval: BillingInterval,
   coverMonths: number | null | undefined,
+  term = 1,
 ): number {
   if (interval === "one_off") return 1;
-  if (!coverMonths || !Number.isFinite(coverMonths) || coverMonths <= 0) return 1;
+
+  const cycles = safeTerm(term);
+  // No duration asked for means ONE CHARGE, and on a two-year line one charge
+  // is two annual cycles. Returning 1 here would invoice a year of a line that
+  // only ever bills in two-year blocks.
+  if (!coverMonths || !Number.isFinite(coverMonths) || coverMonths <= 0) return cycles;
 
   const months = Math.min(Math.trunc(coverMonths), MAX_COVER_MONTHS);
-  return Math.max(1, Math.round(months / MONTHS_PER_CYCLE[interval]));
+  // Round to a whole number of CHARGES, then express it back in base cycles:
+  // half a charge is not a thing that can be billed.
+  const charges = Math.max(1, Math.round(months / (MONTHS_PER_CYCLE[interval] * cycles)));
+  return charges * cycles;
+}
+
+/** Months in one charge — the line's effective cycle, term included. */
+export function cycleMonths(interval: BillingInterval, term = 1): number {
+  if (interval === "one_off") return 0;
+  return MONTHS_PER_CYCLE[interval] * safeTerm(term);
 }
 
 /** Line total across a duration = unit × qty × cycles, clamped like the rest. */
@@ -513,13 +605,23 @@ export function addIntervals(
  * cycles already in the past, so a service backdated six months lands on the
  * next real charge rather than one from January.
  */
-export function nextBillFrom(startedAt: Date, interval: BillingInterval, now = new Date()): Date | null {
+export function nextBillFrom(
+  startedAt: Date,
+  interval: BillingInterval,
+  now = new Date(),
+  term = 1,
+): Date | null {
   if (interval === "one_off") return null;
 
-  let next = addInterval(startedAt, interval);
+  const cycles = safeTerm(term);
+  // Steps of a whole CHARGE. A two-year line's next bill is two years out, not
+  // one — anything else would put it in next year's upcoming-bills list.
+  let step = 1;
+  let next = addIntervals(startedAt, interval, cycles);
   // Bounded so a bad date can't spin: 500 weekly cycles is ~9.5 years.
   for (let i = 0; next && next.getTime() <= now.getTime() && i < 500; i++) {
-    next = addInterval(next, interval);
+    step += 1;
+    next = addIntervals(startedAt, interval, cycles * step);
   }
   return next;
 }

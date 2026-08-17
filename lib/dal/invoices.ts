@@ -70,6 +70,8 @@ export type InvoiceLineItem = {
    * different span would cost before anyone commits to it.
    */
   interval: BillingInterval | null;
+  /** Cycles per charge on the line behind this one. Null when it is gone. */
+  termCount: number | null;
   amountCents: number;
   /** Provisioned items, newline-separated as snapshotted at issue. */
   details: string | null;
@@ -267,6 +269,7 @@ export async function createInvoiceFromServices(input: {
       amountCents: clientServices.amountCents,
       currency: clientServices.currency,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
     })
     .from(clientServices)
     .where(
@@ -307,7 +310,11 @@ export async function createInvoiceFromServices(input: {
   // hold a different opinion about what two years costs.
   const coverMonths = input.coverMonths ?? null;
   const priced = lines.map((line) => {
-    const periods = cyclesForDuration(line.interval, coverMonths);
+    // The term is part of the line's cycle, so it is part of every charge: with
+    // no duration asked for, a two-year line invoices two years. Passing it in
+    // is what stops the invoice quietly billing a year of something that is
+    // only ever billed two at a time.
+    const periods = cyclesForDuration(line.interval, coverMonths, line.termCount);
     // Defensive: a line predating the quantity backfill reads as 1 × the total.
     const unitAmountCents = line.unitAmountCents || line.amountCents;
     const quantity = line.quantity || 1;
@@ -561,6 +568,7 @@ async function loadInvoice(
       // Left join: deleting a billing line must not gut an issued invoice, so
       // the interval simply goes missing rather than the row.
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       amountCents: invoiceLines.amountCents,
       details: invoiceLines.details,
       periodStart: invoiceLines.periodStart,
@@ -781,6 +789,7 @@ export async function setInvoiceDuration(
       periods: invoiceLines.periods,
       amountCents: invoiceLines.amountCents,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
     })
     .from(invoiceLines)
     .leftJoin(clientServices, eq(invoiceLines.clientServiceId, clientServices.id))
@@ -791,7 +800,9 @@ export async function setInvoiceDuration(
 
   const repriced = lineRows.map((line) => {
     // No interval to reason about (the service is gone) — leave it alone.
-    const periods = line.interval ? cyclesForDuration(line.interval, coverMonths) : line.periods;
+    const periods = line.interval
+      ? cyclesForDuration(line.interval, coverMonths, line.termCount ?? 1)
+      : line.periods;
     const unit = line.unitAmountCents || line.amountCents;
     const quantity = line.quantity || 1;
     const period = line.interval

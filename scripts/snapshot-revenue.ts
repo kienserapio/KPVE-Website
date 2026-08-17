@@ -22,6 +22,9 @@ config({ path: ".env.local" });
 
 import postgres from "postgres";
 
+// `term_count` divides out: amount_cents is one CHARGE, and a charge that
+// covers two years is worth half as much per month as the same figure charged
+// yearly. Same rule as monthlyCents() and the SQL in lib/dal/clients.ts.
 const MONTHLY_EQUIVALENT = `
   case "interval"
     when 'weekly'    then amount_cents * 52.0 / 12.0
@@ -29,7 +32,7 @@ const MONTHLY_EQUIVALENT = `
     when 'quarterly' then amount_cents / 3.0
     when 'annually'  then amount_cents / 12.0
     else 0
-  end
+  end / greatest(term_count, 1)
 `;
 
 async function main() {

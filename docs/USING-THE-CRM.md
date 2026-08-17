@@ -216,28 +216,33 @@ repeats — and you confirm before anything is created. Then you get a link, plu
 - **Email it** — opens a pre-written email to that client with the link in it
 - **Revoke** — kills the link
 
-> **A link off a billing line always bills ONE cycle.** On a $88/year line it
-> takes $88 now and $88 every year after, until cancelled. Editing the next bill
-> date doesn't change that either; that field is only the CRM's reminder, not
-> what the client gets charged.
+**Billing more than a year at a time — "Bill every".** Next to *Billed* on the
+line there's a **Bill every** box. A domain registered for two years is
+`Unit price 44.00`, `Qty 2`, `Billed Annually`, **`Bill every 2 year(s)`** — and
+the line reads:
 
-**To charge a longer term — two years up front, say — use "Bill a term…"** on
-the line instead. Pick the span, check the total (`2 × $44/yr · 2 annual charges
-= $176`), and press **Charge $176 — create link**. It raises and sends the
-invoice and hands you the link right there: **Copy link**, **Email it**, done.
+```
+Line total  $44.00 × 2 × 2 = $176.00 every 2 years
+```
 
-The client opens it, sees the invoice, presses Pay now, and pays the whole $176
-as **one card payment** — no subscription, nothing recurring. That link never
-expires, because the Stripe checkout is created at the moment they press Pay,
-not when you sent it.
+The subscription link then charges exactly that: **A$176.00 every 2 years**,
+shown on Stripe as Qty 2 at A$88.00 each. It renews in 2028, not next year, and
+the next bill date moves with it.
 
-It becomes a real invoice the instant you press the button, so check the total
-first — a wrong one is voided and reissued, not edited.
+All three numbers stay visible and correct — the per-domain-per-year price, the
+number of domains, and the number of years. Nothing is retyped as a lump sum.
 
-The **Billed** dropdown on the line is not where duration lives, and it can't
-be: it's the *cycle length*. Setting it to "2 years" would mean claiming the
-rate is $88 per two years, which halves the MRR and gets the next renewal wrong.
-The rate stays $44/domain/year; the *bill* covers two of them.
+Your MRR doesn't move. $176 every two years *is* $88 a year *is* $7.33 a month,
+and that's what Revenue reports. Collecting early is cash flow, not a bigger
+deal. Limits are Stripe's: 3 years on an annual line, 36 months on a monthly one.
+
+**For a one-time charge that does NOT repeat** — a two-year prepayment on a line
+that otherwise stays annual — use **Bill a term…** instead. It raises and sends
+an invoice for the whole amount and hands you the link: **Copy link**, **Email
+it**, done. The client pays it once as a single card payment.
+
+The difference in one line: **Bill every** changes what recurs; **Bill a term**
+takes a single payment and nothing recurs from it.
 
 When the client pays, everything happens by itself:
 
@@ -426,17 +431,15 @@ A weekly charge is counted as 52/12 per month, not ×4. There are 52 weeks in a
 year, not 48 — "×4" would under-report weekly revenue by 8%.
 
 **"I wanted to bill 2 years and Stripe only showed 1."**
-You used the **Subscription link**. That always bills one cycle and then repeats.
-Use **Bill a term…** on the same line instead — pick 2 years, it raises the
-invoice for $176, and the client's Pay now takes it in one payment. Pushing the
-next bill date out to 2028 doesn't do it either; that field only moves the CRM's
-reminder, not the charge.
+Set **Bill every** to `2` on the line (Edit). *Billed* stays *Annually* — that's
+the rate's cycle — and **Bill every** is how many of those cycles each charge
+covers. The link then takes $176 every 2 years. Pushing the next bill date out
+to 2028 does nothing to the charge; that field is only the CRM's reminder.
 
-**"There's no '2 years' in the Billed dropdown."**
-Correct — that's the *cycle length*, not the duration of a bill. Two years is two
-annual cycles paid at once, which belongs to the invoice, not to the arrangement.
-Putting it on the line would mean the rate is $88 per two years, which halves
-your MRR and gets the 2028 renewal wrong. Use **Bill a term…**.
+**"Should I use Bill every or Bill a term?"**
+**Bill every** if the arrangement itself runs in two-year blocks — it recurs, and
+renews in 2028. **Bill a term** for a one-off prepayment on a line that carries
+on annually — one invoice, one payment, nothing recurring.
 
 **"I typed 2 in the custom duration and got one year."**
 The box next to it was set to **months**. Two months on an annual line rounds to

@@ -1,0 +1,1 @@
+ALTER TABLE "client_services" ADD COLUMN "term_count" integer DEFAULT 1 NOT NULL;

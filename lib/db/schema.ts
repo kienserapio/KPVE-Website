@@ -426,6 +426,28 @@ export const clientServices = pgTable(
     currency: text("currency").notNull().default("AUD"),
     interval: billingIntervalEnum("interval").notNull().default("monthly"),
 
+    /**
+     * How many `interval` cycles each charge covers. 1 is every other line ever
+     * written; 2 on an annual line means "$X every two years".
+     *
+     * A domain registered for two years is not an annual subscription and it is
+     * not a one-off — it recurs, just not yearly. Without this the only ways to
+     * express it were to bill a year at a time (wrong: the registrar was paid
+     * for two) or to retype the price as a two-year figure (wrong: the rate per
+     * domain per year stops being visible anywhere, and the renewal in 2028 has
+     * to be reconstructed by hand).
+     *
+     * INVARIANT: it EXTENDS THE CYCLE, it does not change the rate.
+     * `amount_cents` = `unit_amount_cents × quantity × term_count` — the amount
+     * of ONE charge — and the effective cycle is `interval × term_count`. So
+     * $44/domain/year × 2 domains × 2 years is $176 charged every 24 months,
+     * and the MRR it contributes is unchanged at $7.33: collecting two years at
+     * once is a cash-flow fact, not a bigger deal. Every MRR calculation
+     * therefore divides by term_count as well (three of them — see the note in
+     * scripts/snapshot-revenue.ts).
+     */
+    termCount: integer("term_count").notNull().default(1),
+
     status: clientServiceStatusEnum("status").notNull().default("active"),
 
     startedAt: timestamp("started_at", { withTimezone: true }),

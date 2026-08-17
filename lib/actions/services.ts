@@ -210,6 +210,7 @@ export async function addClientServiceAction(
     label: formData.get("label"),
     unitAmount: formData.get("unitAmount"),
     quantity: formData.get("quantity") || undefined,
+    termCount: formData.get("termCount") || undefined,
     currency: formData.get("currency") || undefined,
     interval: formData.get("interval") || undefined,
     status: formData.get("status") || undefined,
@@ -227,9 +228,10 @@ export async function addClientServiceAction(
       clientId: parsed.data.clientId,
       serviceId: parsed.data.serviceId,
       label: parsed.data.label,
-      // Unit and quantity, never a total — the DAL multiplies them.
+      // Unit, quantity and term — never a total. The DAL multiplies them.
       unitAmountCents: parsed.data.unitAmount,
       quantity: parsed.data.quantity,
+      termCount: parsed.data.termCount,
       currency: parsed.data.currency,
       interval: parsed.data.interval,
       status: parsed.data.status,
@@ -256,6 +258,7 @@ export async function updateClientServiceAction(
     label: formData.get("label") || undefined,
     unitAmount: formData.get("unitAmount") || undefined,
     quantity: formData.get("quantity") ?? undefined,
+    termCount: formData.get("termCount") ?? undefined,
     currency: formData.get("currency") || undefined,
     interval: formData.get("interval") || undefined,
     status: formData.get("status") || undefined,
@@ -268,7 +271,7 @@ export async function updateClientServiceAction(
     return fail(parsed.error.issues[0]?.message ?? "Those changes couldn't be saved.");
   }
 
-  const { clientServiceId, unitAmount, quantity, ...rest } = parsed.data;
+  const { clientServiceId, unitAmount, quantity, termCount, ...rest } = parsed.data;
 
   try {
     await requireSession();
@@ -278,6 +281,7 @@ export async function updateClientServiceAction(
       label: rest.label,
       unitAmountCents: unitAmount,
       quantity,
+      termCount,
       currency: rest.currency,
       interval: rest.interval,
       status: rest.status,

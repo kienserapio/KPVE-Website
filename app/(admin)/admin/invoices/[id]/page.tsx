@@ -69,6 +69,7 @@ export default async function InvoiceDetailPage({
           quantity: line.quantity,
           currency: invoice.currency,
           interval: line.interval,
+          termCount: line.termCount,
         }))}
         staleFields={drift}
       />

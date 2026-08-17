@@ -43,6 +43,13 @@
       "when": 1786945750820,
       "tag": "0005_many_proemial_gods",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786957384809,
+      "tag": "0006_cold_stingray",
+      "breakpoints": true
     }
   ]
 }

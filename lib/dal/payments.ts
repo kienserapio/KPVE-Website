@@ -14,7 +14,7 @@ import {
   type ClientServiceStatus,
   type PaymentStatus,
 } from "@/lib/db/schema";
-import { nextBillFrom, summarize, type CurrencyTotal } from "@/lib/billing";
+import { nextBillFrom, safeTerm, summarize, type CurrencyTotal } from "@/lib/billing";
 import {
   appUrl,
   getPaymentProvider,
@@ -71,6 +71,7 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
       quantity: clientServices.quantity,
       currency: clientServices.currency,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       status: clientServices.status,
       clientName: clients.name,
       clientEmail: clients.email,
@@ -91,11 +92,16 @@ export async function createCheckout(clientServiceId: string): Promise<CheckoutI
     clientId: line.clientId,
     label: line.label,
     amountCents: line.amountCents,
+    // The price of one FOR ONE CHARGE. On a two-year line the client is billed
+    // the two-year price of each domain every two years, so the term belongs in
+    // the unit — Stripe multiplies it by the quantity, not by interval_count.
     // Defensive: a line predating the quantity backfill reads as 1 × the total.
-    unitAmountCents: line.unitAmountCents || line.amountCents,
+    unitAmountCents:
+      (line.unitAmountCents || line.amountCents) * safeTerm(line.termCount),
     quantity: line.quantity || 1,
     currency: line.currency,
     interval: line.interval,
+    termCount: line.termCount,
     clientName: line.clientName,
     clientEmail: line.clientEmail,
     customerId: line.customerId,
@@ -324,6 +330,7 @@ export async function applyPaymentSucceeded(event: PaymentEvent): Promise<ApplyR
       clientId: clientServices.clientId,
       label: clientServices.label,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       status: clientServices.status,
       amountCents: clientServices.amountCents,
       currency: clientServices.currency,
@@ -365,8 +372,11 @@ export async function applyPaymentSucceeded(event: PaymentEvent): Promise<ApplyR
 
   if (line.status !== "cancelled") {
     set.status = "active";
+    // A charge on a two-year line buys two years — the next one is 2028.
     set.nextBillAt =
-      line.interval === "one_off" ? null : nextBillFrom(event.paidAt, line.interval);
+      line.interval === "one_off"
+        ? null
+        : nextBillFrom(event.paidAt, line.interval, undefined, line.termCount);
     if (event.subscriptionId) set.externalSubscriptionId = event.subscriptionId;
   }
 
@@ -511,7 +521,11 @@ async function applyInvoicePaymentSucceeded(event: PaymentEvent): Promise<ApplyR
     if (!line.clientServiceId) continue;
 
     const [service] = await db
-      .select({ status: clientServices.status, interval: clientServices.interval })
+      .select({
+        status: clientServices.status,
+        interval: clientServices.interval,
+        termCount: clientServices.termCount,
+      })
       .from(clientServices)
       .where(eq(clientServices.id, line.clientServiceId))
       .limit(1);
@@ -531,7 +545,7 @@ async function applyInvoicePaymentSucceeded(event: PaymentEvent): Promise<ApplyR
           ? null
           : line.periodEnd
             ? dayAfter(line.periodEnd)
-            : nextBillFrom(event.paidAt, service.interval);
+            : nextBillFrom(event.paidAt, service.interval, undefined, service.termCount);
     }
 
     await db.update(clientServices).set(set).where(eq(clientServices.id, line.clientServiceId));
@@ -667,6 +681,8 @@ export type PublicCheckout = {
   amountCents: number;
   currency: string;
   interval: BillingInterval;
+  /** Cycles per charge — "every 2 years" rather than "annually". */
+  termCount: number;
   clientName: string;
   status: ClientServiceStatus | null;
   /** Already settled — the page says so instead of taking a second payment. */
@@ -692,6 +708,7 @@ async function getServiceCheckoutByRef(ref: string): Promise<PublicCheckout | nu
       amountCents: clientServices.amountCents,
       currency: clientServices.currency,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       status: clientServices.status,
       lastPaymentAt: clientServices.lastPaymentAt,
       checkoutCreatedAt: clientServices.checkoutCreatedAt,
@@ -716,6 +733,7 @@ async function getServiceCheckoutByRef(ref: string): Promise<PublicCheckout | nu
   return {
     ref: row.ref,
     kind: "service",
+    termCount: row.termCount,
     label: row.label,
     amountCents: row.amountCents,
     currency: row.currency,
@@ -757,6 +775,7 @@ async function getInvoiceCheckoutByRef(ref: string): Promise<PublicCheckout | nu
   return {
     ref: row.ref,
     kind: "invoice",
+    termCount: 1,
     label: `Invoice ${row.number}`,
     amountCents: dueCents > 0 ? dueCents : row.totalCents,
     currency: row.currency,

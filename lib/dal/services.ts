@@ -13,6 +13,7 @@ import {
   type ClientServiceStatus,
 } from "@/lib/db/schema";
 import {
+  clampTerm,
   lineTotalCents,
   MAX_QUANTITY,
   monthlyCents,
@@ -236,6 +237,8 @@ export type ClientServiceItem = {
   label: string;
   /** The price of ONE, and how many. `amountCents` below is their product. */
   unitAmountCents: number;
+  /** Cycles per charge. 1 for every line that isn't billed a term at a time. */
+  termCount: number;
   quantity: number;
   amountCents: number;
   currency: string;
@@ -266,6 +269,7 @@ export async function listClientServices(clientId: string): Promise<ClientServic
       serviceId: clientServices.serviceId,
       label: clientServices.label,
       unitAmountCents: clientServices.unitAmountCents,
+      termCount: clientServices.termCount,
       quantity: clientServices.quantity,
       amountCents: clientServices.amountCents,
       currency: clientServices.currency,
@@ -355,11 +359,24 @@ export function summarizeClientServices(items: ClientServiceItem[]): CurrencyTot
  * consistent: a quantity that got clamped on the way into the total must be
  * the quantity that gets stored, or the row contradicts itself.
  */
-function priceLine(unitAmountCents: number, quantity: number) {
+function priceLine(
+  unitAmountCents: number,
+  quantity: number,
+  interval: BillingInterval,
+  termCount = 1,
+) {
   const unit = Math.max(Math.trunc(unitAmountCents) || 0, 0);
   const qty = Math.min(Math.max(Math.trunc(quantity) || 1, 1), MAX_QUANTITY);
+  // Clamped against the interval, because the ceiling is Stripe's three-year
+  // billing period and it differs per interval — 3 on annual, 36 on monthly.
+  const term = clampTerm(interval, termCount);
 
-  return { unitAmountCents: unit, quantity: qty, amountCents: lineTotalCents(unit, qty) };
+  return {
+    unitAmountCents: unit,
+    quantity: qty,
+    termCount: term,
+    amountCents: lineTotalCents(unit, qty, term),
+  };
 }
 
 export async function addClientService(input: {
@@ -371,6 +388,8 @@ export async function addClientService(input: {
   quantity: number;
   currency: string;
   interval: BillingInterval;
+  /** Cycles per charge — 2 on an annual line means "every two years". */
+  termCount?: number;
   status: ClientServiceStatus;
   startedAt?: Date;
   notes?: string;
@@ -386,7 +405,12 @@ export async function addClientService(input: {
   if (!client) throw new Error("NOT_FOUND");
 
   const startedAt = input.startedAt ?? new Date();
-  const priced = priceLine(input.unitAmountCents, input.quantity);
+  const priced = priceLine(
+    input.unitAmountCents,
+    input.quantity,
+    input.interval,
+    input.termCount,
+  );
 
   const [row] = await db
     .insert(clientServices)
@@ -399,7 +423,7 @@ export async function addClientService(input: {
       interval: input.interval,
       status: input.status,
       startedAt,
-      nextBillAt: nextBillFrom(startedAt, input.interval),
+      nextBillAt: nextBillFrom(startedAt, input.interval, undefined, priced.termCount),
       notes: input.notes ?? null,
       createdBy: staff.id,
     })
@@ -448,6 +472,7 @@ export async function updateClientService(
     quantity?: number;
     currency?: string;
     interval?: BillingInterval;
+    termCount?: number;
     status?: ClientServiceStatus;
     startedAt?: Date;
     nextBillAt?: Date;
@@ -475,11 +500,20 @@ export async function updateClientService(
   // exists for is the one-click "set quantity to 4" — a quantity-only save
   // that left amount_cents at $11 would under-report this client's MRR by $33
   // a month, for as long as nobody re-saved the line.
-  if (patch.unitAmountCents !== undefined || patch.quantity !== undefined) {
+  if (
+    patch.unitAmountCents !== undefined ||
+    patch.quantity !== undefined ||
+    patch.termCount !== undefined ||
+    // The interval caps the term, so changing it alone can force a re-clamp:
+    // annual tops out at 3 cycles where monthly allows 36.
+    patch.interval !== undefined
+  ) {
     const [current] = await db
       .select({
         unitAmountCents: clientServices.unitAmountCents,
         quantity: clientServices.quantity,
+        termCount: clientServices.termCount,
+        interval: clientServices.interval,
       })
       .from(clientServices)
       .where(eq(clientServices.id, id))
@@ -492,6 +526,8 @@ export async function updateClientService(
       priceLine(
         patch.unitAmountCents ?? current.unitAmountCents,
         patch.quantity ?? current.quantity,
+        patch.interval ?? current.interval,
+        patch.termCount ?? current.termCount,
       ),
     );
   }
@@ -513,6 +549,7 @@ export async function updateClientService(
       clientId: clientServices.clientId,
       startedAt: clientServices.startedAt,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       status: clientServices.status,
       nextBillAt: clientServices.nextBillAt,
     });
@@ -523,10 +560,17 @@ export async function updateClientService(
   // due date — recompute unless the caller set one explicitly.
   const needsRecompute =
     patch.nextBillAt === undefined &&
-    (patch.interval !== undefined || (patch.status && patch.status !== "cancelled"));
+    (patch.interval !== undefined ||
+      patch.termCount !== undefined ||
+      (patch.status && patch.status !== "cancelled"));
 
   if (needsRecompute && row.status !== "cancelled") {
-    const next = nextBillFrom(row.startedAt ?? new Date(), row.interval);
+    const next = nextBillFrom(
+      row.startedAt ?? new Date(),
+      row.interval,
+      undefined,
+      row.termCount,
+    );
     if (next?.getTime() !== row.nextBillAt?.getTime()) {
       await db
         .update(clientServices)
@@ -550,8 +594,9 @@ export async function updateClientService(
 }
 
 /**
- * "Mark billed" — roll the due date forward one cycle. The button the team
- * actually presses each month, and the reason next_bill_at stays honest.
+ * "Mark billed" — roll the due date forward one CHARGE. On a two-year line that
+ * is two years, not one: the button means "we've invoiced what was due", and
+ * what was due covered the whole term.
  */
 export async function markClientServiceBilled(id: string): Promise<{ clientId: string }> {
   const staff = await requireSession();
@@ -560,6 +605,7 @@ export async function markClientServiceBilled(id: string): Promise<{ clientId: s
     .select({
       clientId: clientServices.clientId,
       interval: clientServices.interval,
+      termCount: clientServices.termCount,
       nextBillAt: clientServices.nextBillAt,
       label: clientServices.label,
     })
@@ -577,7 +623,10 @@ export async function markClientServiceBilled(id: string): Promise<{ clientId: s
   const from = line.nextBillAt ?? new Date();
   await db
     .update(clientServices)
-    .set({ nextBillAt: nextBillFrom(from, line.interval), updatedAt: new Date() })
+    .set({
+      nextBillAt: nextBillFrom(from, line.interval, undefined, line.termCount),
+      updatedAt: new Date(),
+    })
     .where(eq(clientServices.id, id));
 
   await touchClient(line.clientId);
@@ -765,6 +814,7 @@ export async function getRevenueSummary(): Promise<RevenueSummary> {
         amountCents: clientServices.amountCents,
         currency: clientServices.currency,
         interval: clientServices.interval,
+        termCount: clientServices.termCount,
         clientId: clientServices.clientId,
       })
       .from(clientServices)
@@ -817,7 +867,7 @@ export async function getRevenueSummary(): Promise<RevenueSummary> {
     const entry =
       grouped.get(key) ??
       { label: line.label, mrrCents: 0, currency, clients: new Set<string>() };
-    entry.mrrCents += monthlyCents(line.amountCents, line.interval);
+    entry.mrrCents += monthlyCents(line.amountCents, line.interval, line.termCount);
     entry.clients.add(line.clientId);
     grouped.set(key, entry);
   }
