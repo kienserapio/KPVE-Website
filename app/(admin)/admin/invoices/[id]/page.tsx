@@ -62,6 +62,14 @@ export default async function InvoiceDetailPage({
         currency={invoice.currency}
         dueDate={invoice.dueDate}
         coverMonths={invoice.coverMonths}
+        durationLines={invoice.lines.map((line) => ({
+          id: line.id,
+          label: line.label,
+          unitAmountCents: line.unitAmountCents,
+          quantity: line.quantity,
+          currency: invoice.currency,
+          interval: line.interval,
+        }))}
         staleFields={drift}
       />
 

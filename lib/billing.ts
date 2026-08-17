@@ -35,6 +35,17 @@ export const INTERVAL_LABELS: Record<BillingInterval, string> = {
   annually: "Annually",
 };
 
+/**
+ * The noun in "every ___" — how a renewal reads in a sentence rather than in a
+ * table. "Quarterly" has no single-word noun, so it says what it means.
+ */
+export const INTERVAL_NOUN: Record<Exclude<BillingInterval, "one_off">, string> = {
+  weekly: "week",
+  monthly: "month",
+  quarterly: "3 months",
+  annually: "year",
+};
+
 /** Compact suffix for inline money — "$11.00/mo". */
 export const INTERVAL_SUFFIX: Record<BillingInterval, string> = {
   one_off: " one-off",

@@ -10,17 +10,12 @@ import {
 import type { InvoiceListItem } from "@/lib/dal/invoices";
 import type { BillingInterval, ClientServiceStatus } from "@/lib/db/schema";
 import { formatDate } from "@/lib/utils";
+import { formatMoney, formatQuantityLine, formatRate } from "@/lib/billing";
 import {
-  cyclesForDuration,
-  DURATION_PRESETS,
-  formatCycles,
-  formatDuration,
-  formatMoney,
-  formatQuantityLine,
-  formatRate,
-  MAX_COVER_MONTHS,
-  periodTotalCents,
-} from "@/lib/billing";
+  DurationBreakdown,
+  DurationPicker,
+  durationTotalCents,
+} from "./DurationPicker";
 import {
   AdminButton,
   AdminInput,
@@ -56,9 +51,6 @@ type BuilderLine = {
 };
 
 const initialState: InvoiceActionState = { ok: false, error: null };
-
-const selectClass =
-  "w-full rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2.5 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25";
 
 export function ClientInvoices({
   clientId,
@@ -181,7 +173,6 @@ function NewInvoiceForm({
   // How long this invoice bills for. `null` is the default — one cycle per
   // line, which is how every invoice worked before durations existed.
   const [coverMonths, setCoverMonths] = useState<number | null>(null);
-  const [customOpen, setCustomOpen] = useState(false);
 
   const checkedLines = services.filter((line) => checked[line.id]);
   // The action rejects a mix of currencies; say so before submit rather than
@@ -195,29 +186,20 @@ function NewInvoiceForm({
   // is the number on the invoice. Tax is deliberately NOT applied: whether GST
   // is added or extracted is an org setting the builder doesn't know, and a
   // preview that guessed at it would be wrong for half of them.
-  const previewCents = checkedLines.reduce(
-    (sum, line) =>
-      sum +
-      periodTotalCents(
-        line.unitAmountCents || line.amountCents,
-        line.quantity || 1,
-        cyclesForDuration(line.interval, coverMonths),
-      ),
-    0,
-  );
+  const durationLines = checkedLines.map((line) => ({
+    id: line.id,
+    label: line.label,
+    // Defensive: a line predating the quantity backfill reads as 1 × the total.
+    unitAmountCents: line.unitAmountCents || line.amountCents,
+    quantity: line.quantity || 1,
+    currency: line.currency,
+    interval: line.interval,
+  }));
+  const previewCents = durationTotalCents(durationLines, coverMonths);
   const previewCurrency = checkedLines[0]?.currency ?? "AUD";
 
   function toggle(id: string) {
     setChecked((prev) => ({ ...prev, [id]: !prev[id] }));
-  }
-
-  function pickPreset(value: string) {
-    if (value === "custom") {
-      setCustomOpen(true);
-      return;
-    }
-    setCustomOpen(false);
-    setCoverMonths(value === "" ? null : Number(value));
   }
 
   return (
@@ -292,81 +274,10 @@ function NewInvoiceForm({
       {/* Duration — bill more than one cycle on this one document. The rate on
           the client's billing lines never moves; only this invoice multiplies. */}
       <div className="flex flex-col gap-2">
-        <div>
-          <AdminLabel htmlFor="duration">Bill for</AdminLabel>
-          <select
-            id="duration"
-            value={customOpen ? "custom" : coverMonths === null ? "" : String(coverMonths)}
-            onChange={(event) => pickPreset(event.target.value)}
-            className={selectClass}
-          >
-            {DURATION_PRESETS.map((preset) => (
-              <option key={preset.label} value={preset.months === null ? "" : preset.months}>
-                {preset.label}
-              </option>
-            ))}
-            <option value="custom">Custom…</option>
-          </select>
-        </div>
-
-        {customOpen && (
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              max={MAX_COVER_MONTHS}
-              step={1}
-              value={coverMonths ?? ""}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setCoverMonths(Number.isFinite(next) && next > 0 ? Math.trunc(next) : null);
-              }}
-              placeholder="18"
-              aria-label="Months to bill for"
-              className={`${selectClass} max-w-[7rem]`}
-            />
-            <span className="text-sm text-[var(--admin-fg-muted)]">months</span>
-          </div>
-        )}
-
-        {/* The multiplier is per line, because a monthly line and an annual one
-            do not get the same number of charges out of the same span. */}
-        {coverMonths !== null && checkedLines.length > 0 && (
-          <ul className="flex flex-col gap-0.5">
-            {checkedLines.map((line) => {
-              const cycles = cyclesForDuration(line.interval, coverMonths);
-              const detail = formatCycles(line.interval, cycles);
-              return (
-                <li key={line.id} className="text-[11px] text-[var(--admin-fg-subtle)]">
-                  {line.label} ·{" "}
-                  {detail
-                    ? `${detail} = ${formatMoney(
-                        periodTotalCents(
-                          line.unitAmountCents || line.amountCents,
-                          line.quantity || 1,
-                          cycles,
-                        ),
-                        line.currency,
-                      )}`
-                    : line.interval === "one_off"
-                      ? "one-off — not multiplied"
-                      : "one charge"}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {!noneChecked && !mixedCurrency && (
-          <p className="text-xs text-[var(--admin-fg-muted)]">
-            {coverMonths === null
-              ? "One billing cycle per line."
-              : `${formatDuration(coverMonths)} up front.`}{" "}
-            Lines total{" "}
-            <Money className="font-medium">{formatMoney(previewCents, previewCurrency)}</Money>{" "}
-            before GST.
-          </p>
-        )}
+        <DurationPicker id="duration" months={coverMonths} onChange={setCoverMonths} />
+        {/* Always shown, not only for multi-period invoices: the total about to
+            be created is the one thing worth being sure of before creating it. */}
+        <DurationBreakdown lines={durationLines} months={coverMonths} />
       </div>
 
       {/* The value the action reads. Held apart from the controls above so the
@@ -416,8 +327,15 @@ function NewInvoiceForm({
       )}
 
       <div className="flex items-center gap-3">
+        {/* The amount is on the button. Reading the total and then pressing a
+            button labelled only "Create draft" is one glance too many, and the
+            glance people skip. */}
         <AdminButton type="submit" loading={pending} disabled={noneChecked}>
-          {pending ? "Creating" : "Create draft"}
+          {pending
+            ? "Creating"
+            : noneChecked || mixedCurrency
+              ? "Create draft"
+              : `Create draft — ${formatMoney(previewCents, previewCurrency)}`}
         </AdminButton>
         <button
           type="button"

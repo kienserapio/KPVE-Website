@@ -10,14 +10,14 @@ import {
   type InvoiceActionState,
 } from "@/lib/actions/invoices";
 import type { InvoiceStatus } from "@/lib/db/schema";
-import {
-  DURATION_PRESETS,
-  formatDuration,
-  formatMoney,
-  MAX_COVER_MONTHS,
-} from "@/lib/billing";
+import { formatDuration, formatMoney } from "@/lib/billing";
 import { formatDate } from "@/lib/utils";
 import { AdminButton } from "./ui";
+import {
+  DurationBreakdown,
+  DurationPicker,
+  type DurationLine,
+} from "./DurationPicker";
 
 /* ---------------------------------------------------------------------------
    The invoice action bar — everything interactive about an invoice lives here,
@@ -42,6 +42,7 @@ export function InvoiceActions({
   currency,
   dueDate,
   coverMonths,
+  durationLines,
   staleFields = [],
 }: {
   status: InvoiceStatus;
@@ -54,6 +55,8 @@ export function InvoiceActions({
   dueDate: Date | null;
   /** Months billed up front, or null for one cycle per line. */
   coverMonths: number | null;
+  /** The invoice's lines, so a draft can be re-priced with its total in view. */
+  durationLines: DurationLine[];
   /**
    * Plain-English names of the things that have changed in settings since this
    * draft was snapshotted — empty when the draft is current, and always empty
@@ -127,7 +130,11 @@ export function InvoiceActions({
       {/* Duration lives with the draft controls because it re-prices the
           document: it is an edit, and edits stop at "sent" like every other. */}
       {status === "draft" && (
-        <DurationControl invoiceId={invoiceId} coverMonths={coverMonths} />
+        <DurationControl
+          invoiceId={invoiceId}
+          coverMonths={coverMonths}
+          lines={durationLines}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -263,91 +270,56 @@ const durationInitial: InvoiceActionState = { ok: false, error: null };
 function DurationControl({
   invoiceId,
   coverMonths,
+  lines,
 }: {
   invoiceId: string;
   coverMonths: number | null;
+  lines: DurationLine[];
 }) {
   const [state, formAction, pending] = useActionState(
     setInvoiceDurationAction,
     durationInitial,
   );
-
-  // A duration that isn't one of the presets is a custom one, and the box has
-  // to open showing it rather than silently snapping to the nearest preset.
-  const isPreset = DURATION_PRESETS.some((preset) => preset.months === coverMonths);
-  const [custom, setCustom] = useState(!isPreset);
   const [months, setMonths] = useState<number | null>(coverMonths);
+
+  // Nothing to apply until the picker differs from what's on the invoice — an
+  // enabled "Apply" that would change nothing is a button that teaches people
+  // the control does nothing.
+  const dirty = months !== coverMonths;
 
   return (
     <form
       action={formAction}
-      className="flex flex-wrap items-end gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-surface-2)] px-4 py-3"
+      className="flex flex-col gap-3 rounded-lg border border-[var(--admin-border)] bg-[var(--admin-surface-2)] px-4 py-3"
     >
       <input type="hidden" name="invoiceId" value={invoiceId} />
       <input type="hidden" name="coverMonths" value={months ?? ""} />
 
-      <div>
-        <label
-          htmlFor="invoice-duration"
-          className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]"
+      <div className="flex flex-wrap items-end gap-3">
+        <DurationPicker id="invoice-duration" months={months} onChange={setMonths} />
+        <AdminButton
+          type="submit"
+          variant={dirty ? "primary" : "secondary"}
+          loading={pending}
+          disabled={!dirty}
         >
-          Bill for
-        </label>
-        <select
-          id="invoice-duration"
-          value={custom ? "custom" : months === null ? "" : String(months)}
-          onChange={(event) => {
-            const value = event.target.value;
-            if (value === "custom") {
-              setCustom(true);
-              return;
-            }
-            setCustom(false);
-            setMonths(value === "" ? null : Number(value));
-          }}
-          className="rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25"
-        >
-          {DURATION_PRESETS.map((preset) => (
-            <option key={preset.label} value={preset.months === null ? "" : preset.months}>
-              {preset.label}
-            </option>
-          ))}
-          <option value="custom">Custom…</option>
-        </select>
+          {pending ? "Re-pricing" : dirty ? "Apply new duration" : "Applied"}
+        </AdminButton>
       </div>
 
-      {custom && (
-        <div className="flex items-center gap-2">
-          <input
-            type="number"
-            min={1}
-            max={MAX_COVER_MONTHS}
-            step={1}
-            value={months ?? ""}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              setMonths(Number.isFinite(next) && next > 0 ? Math.trunc(next) : null);
-            }}
-            aria-label="Months to bill for"
-            className="w-24 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-input)] px-3 py-2 text-sm text-[var(--admin-fg)] outline-none transition focus:border-[var(--admin-accent)] focus:ring-2 focus:ring-[var(--admin-accent)]/25"
-          />
-          <span className="text-sm text-[var(--admin-fg-muted)]">months</span>
-        </div>
-      )}
+      {/* What the invoice becomes if Apply is pressed — priced from the lines
+          themselves, so it is the same arithmetic the DAL will run. */}
+      {dirty && <DurationBreakdown lines={lines} months={months} />}
 
-      <AdminButton type="submit" variant="secondary" loading={pending}>
-        {pending ? "Re-pricing" : "Apply"}
-      </AdminButton>
-
-      <p className="basis-full text-xs text-[var(--admin-fg-subtle)]">
+      <p className="text-xs text-[var(--admin-fg-subtle)]">
         {state.error ? (
           <span role="alert" className="text-red-500">
             {state.error}
           </span>
         ) : coverMonths ? (
-          `Currently billing ${formatDuration(coverMonths)} up front. Changing this re-prices every line and its GST.`
+          `Billing ${formatDuration(coverMonths)} up front. Changing it re-prices every line and its GST.`
         ) : (
-          "Currently one billing cycle per line. Pick a longer span to bill it up front."
+          "One billing cycle per line. Pick a longer span to bill it up front."
         )}
       </p>
     </form>

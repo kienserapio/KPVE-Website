@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { getInvoiceByToken } from "@/lib/dal/invoices";
-import { formatMoney } from "@/lib/billing";
 import { InvoiceDocument } from "@/components/admin/InvoiceDocument";
 import { PrintButton } from "@/components/admin/InvoiceActions";
 import { PayInvoiceButton } from "./PayInvoiceButton";
@@ -69,11 +68,16 @@ export default async function PublicInvoicePage({
                 Paid — thank you
               </span>
             ) : invoice.payable ? (
-              // The amount on the button is the BALANCE, not the total: a
-              // part-paid invoice must never ask for the whole thing again.
+              // The amount is the BALANCE, not the total: a part-paid invoice
+              // must never ask for the whole thing again.
               <PayInvoiceButton
                 token={token}
-                label={`Pay now ${formatMoney(balanceDueCents, invoice.currency)}`}
+                number={invoice.number}
+                amountCents={balanceDueCents}
+                currency={invoice.currency}
+                coverStart={invoice.coverMonths ? invoice.coverStart : null}
+                coverEnd={invoice.coverMonths ? invoice.coverEnd : null}
+                partPaid={invoice.amountPaidCents > 0}
               />
             ) : null}
           </div>

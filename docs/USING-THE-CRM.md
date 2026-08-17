@@ -208,11 +208,19 @@ follow-ups**, already dated.
 
 ### 7. Get them to pay
 
-On the billing line, click **Payment link**. You get a link, plus:
+On the billing line, click **Subscription link** (it says **Payment link** on a
+one-off). It shows you exactly what will be charged — the amount, and whether it
+repeats — and you confirm before anything is created. Then you get a link, plus:
 
 - **Copy** — puts it on your clipboard
 - **Email it** — opens a pre-written email to that client with the link in it
 - **Revoke** — kills the link
+
+> **A link off a billing line always bills ONE cycle.** On a $88/year line it
+> takes $88 now and $88 every year after, until cancelled. There is no way to
+> tell it "two years" — that's what an **invoice** is for (7b below). Editing the
+> next bill date doesn't change it either; that field is only the CRM's reminder,
+> not what the client gets charged.
 
 When the client pays, everything happens by itself:
 
@@ -249,9 +257,14 @@ On the client page, the **Invoices** card → **New invoice**:
 **Billing two years up front.** Pick *2 years* and each recurring line is
 multiplied by however many of its own cycles fit: a $44/mo line becomes 24
 charges — $1,056 — and an annual line becomes 2. A one-off is never multiplied;
-a project fee doesn't repeat. The builder shows the working per line and the
-total before you create anything, and the invoice prints "24 × 1 Sep 2026 –
-31 Aug 2028" against the line plus the period in the header.
+a project fee doesn't repeat. The builder shows the working per line, the total,
+and puts that total on the **Create draft** button, so the number you're about
+to commit to is never more than a glance away. The invoice then prints "24 ×
+1 Sep 2026 – 31 Aug 2028" against the line plus the period in the header.
+
+*Custom…* opens a box with a **months / years** selector next to it — set the
+unit to match what you typed. Typing `2` while it says *months* means two
+months, not two years.
 
 Their **rate never changes**. The client is still on $44/mo, MRR still counts $44
 — you've collected two years of it early, not signed them onto a bigger plan. And
@@ -259,8 +272,9 @@ when they pay, that line's next bill date jumps to the day after the period ends
 so they won't turn up in next month's upcoming bills.
 
 Got the duration wrong? While it's still a **draft**, change *Bill for* at the
-top of the invoice and press **Apply** — every line and the GST re-price. Once
-it's sent it's frozen like any other invoice: void and reissue.
+top of the invoice. It shows you the new line-by-line total before you commit;
+press **Apply new duration** and every line and the GST re-price. Once it's sent
+it's frozen like any other invoice: void and reissue.
 
 The invoice opens. It carries **your** ABN and address, the **client's** (the
 company's, when you invoiced a company), every line with its quantity and the
@@ -269,10 +283,12 @@ can edit or delete it. Then:
 
 - **Send** — marks it sent. Now **Copy client link** or **Email it** — the client
   gets a read-only page at `/invoice/…` with a **Pay now** button (and your bank
-  details for transfers). Pay now charges the invoice **balance**, once — the
-  whole $1,056 on a two-year invoice, not $44 a month. The link never expires:
-  the checkout is created at the moment they press the button, so an invoice
-  opened three weeks later still works.
+  details for transfers). Pressing it shows them the amount, the period it
+  covers and that it's a single payment; only **Continue to secure checkout**
+  sends them to Stripe. It charges the invoice **balance**, once — the whole
+  $1,056 on a two-year invoice, not $44 a month. The link never expires: the
+  checkout is created the moment they press the button, so an invoice opened
+  three weeks later still works.
 - **Print** — your browser's *Save as PDF* produces the file. It's the same
   document the client sees.
 - When they pay the link, the invoice marks itself **Paid**. Or click **Mark
@@ -391,3 +407,15 @@ rewrites the enquiry they came from. The enquiry is a record of what they sent.
 **"Weekly billing looks higher than I expected."**
 A weekly charge is counted as 52/12 per month, not ×4. There are 52 weeks in a
 year, not 48 — "×4" would under-report weekly revenue by 8%.
+
+**"I wanted to bill 2 years and Stripe only showed 1."**
+You used the **link on the billing line**. That always bills one cycle and then
+repeats — it has no idea what "2 years" is. Raise an **invoice** on that line
+with **Bill for → 2 years** instead; the client's Pay now takes the whole amount
+in one payment. Pushing the next bill date out to 2028 doesn't do it either —
+that field only moves the CRM's reminder, not the charge.
+
+**"I typed 2 in the custom duration and got one year."**
+The box next to it was set to **months**. Two months on an annual line rounds to
+one charge. Switch the selector to **years**, or use the *2 years* preset. The
+breakdown under the picker always shows the real total before you create.

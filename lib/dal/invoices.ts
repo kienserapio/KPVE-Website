@@ -63,6 +63,13 @@ export type InvoiceLineItem = {
   quantity: number;
   /** Billing cycles this line covers — 24 on a two-year monthly line. */
   periods: number;
+  /**
+   * The cycle of the billing line behind this one, or null once that line has
+   * been deleted. NOT part of the printed document — the frozen label, amount
+   * and period are. It exists so the draft's duration control can say what a
+   * different span would cost before anyone commits to it.
+   */
+  interval: BillingInterval | null;
   amountCents: number;
   /** Provisioned items, newline-separated as snapshotted at issue. */
   details: string | null;
@@ -551,6 +558,9 @@ async function loadInvoice(
       unitAmountCents: invoiceLines.unitAmountCents,
       quantity: invoiceLines.quantity,
       periods: invoiceLines.periods,
+      // Left join: deleting a billing line must not gut an issued invoice, so
+      // the interval simply goes missing rather than the row.
+      interval: clientServices.interval,
       amountCents: invoiceLines.amountCents,
       details: invoiceLines.details,
       periodStart: invoiceLines.periodStart,
@@ -558,6 +568,7 @@ async function loadInvoice(
       position: invoiceLines.position,
     })
     .from(invoiceLines)
+    .leftJoin(clientServices, eq(invoiceLines.clientServiceId, clientServices.id))
     .where(eq(invoiceLines.invoiceId, row.id))
     .orderBy(asc(invoiceLines.position));
 
