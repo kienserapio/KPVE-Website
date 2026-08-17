@@ -18,6 +18,24 @@ npm run dev
 `SESSION_SECRET` must be generated with `openssl rand -base64 32`. Rotating it signs
 every active session out.
 
+### Deploying a schema change
+
+**Migrate before you push.** Vercel deploys the moment `main` moves, so code that
+reads a new column reaches production the instant it lands — and if the column
+isn't there yet, every page touching that table dies with "An error occurred in
+the Server Components render". Additive columns are safe to add ahead of the code
+that uses them; the reverse ordering never is.
+
+```bash
+npm run db:migrate                 # against the production DATABASE_URL
+# confirm it actually landed — drizzle-kit can still be working when it returns
+psql "$DATABASE_URL" -c "\d client_services"
+git push                           # only now
+```
+
+Testing against a local scratch database does not cover this: you migrated that
+one yourself, so it always has the new column and cannot reproduce the failure.
+
 ## Routes
 
 | Route | Access | Purpose |
