@@ -12,6 +12,7 @@
     "db:studio": "drizzle-kit studio",
     "staff:create": "tsx scripts/create-staff-user.ts",
     "portal:issue": "tsx scripts/issue-portal-code.ts",
+    "portal:demo": "tsx scripts/seed-portal-demo.ts",
     "services:seed": "tsx scripts/seed-services.ts",
     "revenue:snapshot": "tsx scripts/snapshot-revenue.ts"
   },
