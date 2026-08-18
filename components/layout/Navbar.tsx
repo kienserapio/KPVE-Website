@@ -107,14 +107,29 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* CTA — desktop only. Scrolls to the contact form on the current page
-            (every page carrying the Navbar renders the #contact section). */}
-        <a
-          href="#contact"
-          className="hidden rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white md:inline-block"
-        >
-          Let&rsquo;s Talk!
-        </a>
+        {/* Right-hand cluster — desktop only. */}
+        <div className="hidden items-center gap-2 md:flex lg:gap-4">
+          {/* Existing clients only, so it stays a quiet text link rather than a
+              second button competing with the CTA. prefetch={false} because
+              almost nobody arriving on the marketing site is going here, and
+              the page behind it is dynamic. */}
+          <Link
+            href="/portal/login"
+            prefetch={false}
+            className="rounded-full px-3 py-1.5 text-sm font-medium text-muted-3 transition-colors duration-200 hover:text-white"
+          >
+            Client login
+          </Link>
+
+          {/* CTA. Scrolls to the contact form on the current page (every page
+              carrying the Navbar renders the #contact section). */}
+          <a
+            href="#contact"
+            className="rounded-full border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-medium text-muted-3 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/40 hover:text-white"
+          >
+            Let&rsquo;s Talk!
+          </a>
+        </div>
 
         {/* hamburger — mobile only */}
         <button
@@ -185,6 +200,23 @@ export function Navbar() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.1 + NAV_LINKS.length * 0.06, duration: 0.3 }}
+              >
+                {/* A real route, so no scroll dance — closing the drawer is
+                    enough, and the navigation unlocks body scroll on unmount. */}
+                <Link
+                  href="/portal/login"
+                  prefetch={false}
+                  onClick={() => setMenuOpen(false)}
+                  className="block rounded-xl px-4 py-3 text-base font-medium text-muted-3 transition-colors duration-200 hover:bg-white/5 hover:text-white"
+                >
+                  Client login
+                </Link>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 + (NAV_LINKS.length + 1) * 0.06, duration: 0.3 }}
                 className="mt-4"
               >
                 <a
