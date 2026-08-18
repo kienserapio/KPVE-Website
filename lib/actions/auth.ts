@@ -6,6 +6,7 @@ import { loginSchema } from "@/lib/validation";
 import { findStaffByEmailForAuth, recordLogin } from "@/lib/dal/staff";
 import { verifyPassword, dummyCompare } from "@/lib/auth/password";
 import { createSession, destroySession } from "@/lib/auth/session";
+import { safeNext } from "@/lib/auth/redirect";
 import { getSession } from "@/lib/dal/session";
 import { logActivity } from "@/lib/dal/activity";
 import { rateLimit } from "@/lib/rate-limit";
@@ -73,11 +74,7 @@ export async function login(
 
   // Only ever redirect to a relative path on this site. Taking a raw `next`
   // value from the query string would be an open-redirect.
-  const rawNext = String(formData.get("next") ?? "");
-  const safeNext =
-    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/admin";
-
-  redirect(safeNext);
+  redirect(safeNext(formData.get("next"), "/", "/admin"));
 }
 
 export async function logout(): Promise<void> {

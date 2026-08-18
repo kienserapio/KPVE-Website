@@ -50,6 +50,20 @@
       "when": 1786957384809,
       "tag": "0006_cold_stingray",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787021398205,
+      "tag": "0007_add_actor_type_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787021450746,
+      "tag": "0008_add_client_users",
+      "breakpoints": true
     }
   ]
 }

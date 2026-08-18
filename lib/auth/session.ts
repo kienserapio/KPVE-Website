@@ -7,6 +7,17 @@ export const SESSION_COOKIE = "kpve_session";
 
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/**
+ * Stamped into every staff token and demanded of every staff token, so it can
+ * never be mistaken for the client portal's (lib/auth/portal-session.ts) even
+ * if the two secrets were ever accidentally made equal. Adding this invalidated
+ * the tokens issued before it existed — a one-off sign-in, nothing more.
+ */
+const STAFF_AUDIENCE = "kpve:staff";
+
+/** A skewed lambda clock must not reject a token another lambda just minted. */
+const CLOCK_TOLERANCE_SECONDS = 30;
+
 function getSecretKey(): Uint8Array {
   const secret = process.env.SESSION_SECRET;
   if (!secret) {
@@ -26,6 +37,7 @@ export async function encrypt(payload: SessionPayload): Promise<string> {
   return new SignJWT({ staffId: payload.staffId })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
+    .setAudience(STAFF_AUDIENCE)
     .setExpirationTime(new Date(payload.expiresAt))
     .sign(getSecretKey());
 }
@@ -37,9 +49,15 @@ export async function encrypt(payload: SessionPayload): Promise<string> {
 export async function decrypt(token: string | undefined): Promise<SessionPayload | null> {
   if (!token) return null;
 
+  // Resolved OUTSIDE the try: a missing SESSION_SECRET is a deployment fault,
+  // and caught here it would read as "not authenticated" instead.
+  const key = getSecretKey();
+
   try {
-    const { payload } = await jwtVerify(token, getSecretKey(), {
+    const { payload } = await jwtVerify(token, key, {
       algorithms: ["HS256"], // pin the algorithm — never trust the token's own header
+      audience: STAFF_AUDIENCE, // a portal token can never satisfy this
+      clockTolerance: CLOCK_TOLERANCE_SECONDS,
     });
 
     if (typeof payload.staffId !== "string" || !payload.staffId) return null;
@@ -49,7 +67,8 @@ export async function decrypt(token: string | undefined): Promise<SessionPayload
       expiresAt: (payload.exp ?? 0) * 1000,
     };
   } catch {
-    // Expired, tampered, wrong secret, malformed — all the same to us.
+    // Expired, tampered, wrong secret, wrong audience, malformed — all the
+    // same to us.
     return null;
   }
 }

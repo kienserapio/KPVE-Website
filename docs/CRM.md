@@ -9,14 +9,16 @@ Before this existed, `components/sections/Contact.tsx` called `preventDefault()`
 
 ```bash
 npm install
-cp .env.example .env.local     # fill in DATABASE_URL and SESSION_SECRET
+cp .env.example .env.local     # fill in DATABASE_URL, SESSION_SECRET, PORTAL_SESSION_SECRET
 npm run db:migrate             # create tables
 npm run staff:create -- --email you@kpve.com --name "Your Name"
 npm run dev
 ```
 
-`SESSION_SECRET` must be generated with `openssl rand -base64 32`. Rotating it signs
-every active session out.
+`SESSION_SECRET` and `PORTAL_SESSION_SECRET` are each generated with
+`openssl rand -base64 32`, and they must be **different values** — the app refuses to
+open a portal session if they match. Rotating one signs out that side only: staff or
+clients, never both.
 
 ### Deploying a schema change
 
@@ -55,6 +57,9 @@ one yourself, so it always has the new column and cannot reproduce the failure.
 | `/pay/complete` · `/pay/cancelled` | Public | Where Stripe returns the client |
 | `/invoice/[token]` | Public, unlisted | The client's own copy of an invoice. The 32-hex token is the credential |
 | `POST /api/stripe/webhook` | Signature-gated | Records payments. No session; the HMAC is the authorization |
+| `/portal/login` | Public | Client sign-in — email plus the access code staff issued |
+| `/portal` | Client | Their own account. Every query on it is scoped to the session's client |
+| `/portal/logout` | Public | Clears the portal cookie. Reached by redirect, never linked |
 
 Marketing pages stay statically prerendered. Only admin routes are dynamic, because
 they read the session cookie.
@@ -122,8 +127,16 @@ a forged session cookie gets past proxy and is then rejected by the DAL.
   dated tasks when the service is attached.
 - **`revenue_snapshots`** — one row per month per currency. The live tables only describe
   *now*; this is what makes "MRR last month" answerable.
+- **`client_users`** — who can sign in to the client portal, one row per person per
+  client. Email is unique *per client*, not globally: one individual can own several
+  `clients` rows, and each is entered separately. The credential is an access code split
+  into a `code_selector` (unique, the lookup key, not a secret) and the SHA-256 of its
+  verifier — see the Client portal section. `failed_attempts`/`locked_until` are the
+  durable throttle, and `sessions_valid_from` is "sign out everywhere".
 - **`activity_log`** — audit trail. Generic `entityType`/`entityId` so future entities
-  log through it without a schema change.
+  log through it without a schema change. `actor_type` is `staff`, `client` or `system`;
+  `actor_id` has no FK and holds whichever table's id matches, so `listActivity` joins
+  both.
 
 ## Security
 
@@ -145,6 +158,14 @@ a forged session cookie gets past proxy and is then rejected by the DAL.
 | Payment refs are 32 hex chars — a checkout link is a credential | `lib/payments/mock.ts` |
 | Document links restricted to `http:`/`https:` (no `javascript:`) | `lib/validation.ts` |
 | Simulator refuses any ref that isn't `mock_` — it can't settle a real invoice | `lib/dal/payments.ts` |
+| Staff and portal tokens carry distinct `aud` claims — neither can be replayed as the other | `lib/auth/session.ts`, `lib/auth/portal-session.ts` |
+| Separate secrets, and a portal session refuses to open if the two match | `lib/auth/portal-session.ts` |
+| Portal cookie is `__Host-` prefixed in production — a subdomain cannot set it | `lib/auth/portal-session.ts` |
+| Access codes: 80-bit verifier, SHA-256, compared with `timingSafeEqual` | `lib/auth/portal-code.ts` |
+| Durable per-account backoff, capped at 5 min, so a lockout can't be weaponised | `lib/dal/portal-users.ts` |
+| Fixed 600 ms response floor on portal sign-in — every outcome takes the same time | `lib/actions/portal-auth.ts` |
+| Portal sign-in has its own rate-limiter map, so flooding it can't clear the others | `lib/rate-limit.ts` |
+| `Referrer-Policy` so an invoice token can't leak to an external site via `Referer` | `next.config.ts` |
 
 The rate limiter is per-instance and in-memory. On Vercel each lambda holds its own
 counter, so the effective limit is looser than the number suggests. That is fine for a
@@ -281,6 +302,103 @@ first Revenue page view of the day. Months without a snapshot are reconstructed 
 service start/cancel dates and drawn as outlined bars — a reconstruction can't see a
 pause or a mid-month reprice, so it is never presented as a recorded number.
 
+## Client portal
+
+A client signs in at `/portal/login` with their email and an access code KPVE issues.
+There is no signup, no password to choose and no reset flow to abuse.
+
+### The access code
+
+24 characters of Crockford base32, shown in six groups of four:
+
+```
+KM4P-8T2X-9WQR-3FHV-6BNY-J57Z
+└──────┘ └────────────────────┘
+selector          verifier
+```
+
+The **selector** (first 8 characters, unique index) is the lookup key, not a secret. It
+exists so a sign-in is one indexed row fetch. Without it, the only way to find the right
+row is to compare the code against every row sharing the submitted email — which makes
+the work proportional to a number the attacker picks, and that is both a timing oracle
+("this address is on three KPVE accounts") and a way to burn CPU on a public endpoint.
+
+The **verifier** (remaining 16 characters, 80 bits) is stored only as a SHA-256. Fast
+hashing is correct here: bcrypt defends human-chosen passwords against dictionaries, and
+this is uniform randomness that no dictionary contains.
+
+Crockford base32 because the code gets read down a phone: no I, L, O or U, so 1/I and
+0/O cannot be confused, and `normalizeAccessCode` folds case, spaces and dashes.
+
+Codes expire after 60 days. Reissuing replaces the code **and** stamps
+`sessions_valid_from`, which ends every session the old code had opened.
+
+Issue one from the **Portal access** card on the client's page: name, email, and
+the code appears once with a copy button and an "Email it" link that composes the
+message. The same card reissues a code, disables a login, unlocks one that has
+been throttled, and removes one that was created by mistake.
+
+There is a CLI for the headless case — onboarding several clients in one sitting,
+or a machine with no browser:
+
+```bash
+npm run portal:issue -- --client "Rare Gem" --email them@example.com --name "Their Name"
+```
+
+Either way the code prints once. Only its hash is stored, so a lost code is
+reissued, never recovered.
+
+### What each button does to a live session
+
+| Action | Their open session | Their code |
+|---|---|---|
+| New code | ends | replaced |
+| Disable | ends | untouched, and refused while disabled |
+| Turn back on | stays ended | works again |
+| Unlock | untouched | untouched |
+| Remove | n/a | row deleted |
+
+"Turn back on" restores `invited` or `active` depending on whether they had ever
+signed in, rather than forcing `active` — "never signed in" is the fact the
+Remove button is allowed to act on, and overwriting it would quietly make a used
+login deletable.
+
+Remove is only offered before a first sign-in. After that the row is what the
+audit trail resolves a portal actor's name from, so access is withdrawn by
+disabling, which keeps the history and is just as final from outside.
+
+### Sign-in, and what each failure looks like
+
+Unknown selector, wrong email, wrong code, expired code, throttled, access withdrawn —
+all return the same sentence, and every path is held to a 600 ms floor so they cannot be
+told apart by timing either. A wrong code against a real account increments
+`failed_attempts` and sets `locked_until` to a doubling backoff capped at five minutes;
+a wrong *selector* touches nothing, so nobody can lock an account they cannot address.
+
+### Isolation
+
+Portal queries belong in their own DAL module and take **no `clientId` parameter** — each
+one calls `requirePortalSession()` and builds the predicate from the session, so there is
+no argument a caller could get wrong. Never add an "is this a client?" branch to a staff
+DAL function: that is where the first cross-client leak comes from.
+
+The portal must never render `invoices.public_token`. It is a permanent bearer credential
+that outlives any session, so a portal invoice PDF gets its own session-checked route.
+
+### Two cookies, never one
+
+`kpve_session` (staff) and `kpve_portal` (clients) are separate cookies with separate
+secrets and distinct `aud` claims, so neither can be replayed as the other even if the
+secrets were ever made equal. `proxy.ts` branches on the path and reads only that side's
+cookie — holding one must not open the other, and a staff member testing a client login
+must still be able to reach both sign-in forms.
+
+`/portal/logout` is a GET route handler and is the escape hatch for a cookie that
+verifies but resolves to no live account: proxy trusts the cookie's presence and sends
+`/portal/login` → `/portal`, the page finds no account and sends `/portal` → `/portal/login`,
+and only a route handler can break that loop by clearing the cookie. `/logout` clears the
+staff cookie only, and vice versa.
+
 ## Theme
 
 The admin area supports light and dark; the marketing site is dark-only. The theme is
@@ -297,5 +415,7 @@ Email notification is deliberately absent. `/api/contact` has the hook point mar
 When Resend is added, the send must be wrapped so a failure cannot fail a lead that is
 already saved — free tier is 3,000/month, 100/day, and needs a verified sending domain.
 
-Seams left open for a future client portal: the DAL pattern, the `(marketing)`/`(admin)`
-route groups, the generic `activity_log`, and `leads.status = 'converted'`.
+The client portal has its sign-in, its session and the staff card that issues
+access. The services, invoices, payments and receipts views are the next phase —
+until they land, a signed-in client sees a placeholder and the invoice links they
+are emailed keep working exactly as before.

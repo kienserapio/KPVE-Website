@@ -291,7 +291,12 @@ services, a contact form, case studies, and testimonials.
 - **Staff roles** — Admin vs Member, "my leads", round-robin assignment.
 - **Recurring task templates** — auto-create an onboarding checklist per new client
   per service.
-- **Client portal** — clients log in to see project status, tasks, invoices.
+- ✅ **Client portal — sign-in** — clients sign in at `/portal` with their email and a
+  KPVE-issued access code. Separate cookie, separate secret, own DAL.
+- **Client portal — the pages** — services, invoices, payments, receipts, Pay now.
+- ✅ **Client portal — staff UI** — the Portal access card on a client's page:
+  give someone access, reissue a code, disable/re-enable, unlock a throttled
+  login, remove one created by mistake. Code shown once, copy + email it.
 - **In-app notifications** — bell + daily email digest.
 
 ---
@@ -487,7 +492,8 @@ tasks → active, and fix whatever it surfaces.
 - **Deals / opportunities** — value + stage + close date, separate from lead
   triage, so the pipeline is money-weighted.
 - **Roles** — Admin vs Member, "my clients", assignment.
-- **Client portal** — the client logs in: status, invoices, tasks.
+- **Client portal** — the client logs in: status, invoices, tasks. *Sign-in is built; the
+  views are not.*
 
 ---
 

@@ -42,6 +42,15 @@ const ACTION_LABELS: Record<string, string> = {
   "login.success": "Signed in",
   "login.failed": "Failed sign-in attempt",
   logout: "Signed out",
+  "portal.login.success": "Client signed in to the portal",
+  "portal.login.failed": "Failed client portal sign-in",
+  "portal.logout": "Client signed out of the portal",
+  "portal_access.issued": "Portal login created",
+  "portal_access.code_reissued": "Portal access code reissued",
+  "portal_access.disabled": "Portal login disabled",
+  "portal_access.enabled": "Portal login re-enabled",
+  "portal_access.unlocked": "Portal login unlocked",
+  "portal_access.removed": "Portal login removed",
 };
 
 export default async function ActivityPage() {

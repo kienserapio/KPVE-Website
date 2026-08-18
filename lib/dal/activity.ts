@@ -1,13 +1,13 @@
 import "server-only";
 
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 
 import { db } from "@/lib/db";
-import { activityLog, staffUsers } from "@/lib/db/schema";
+import { activityLog, clientUsers, staffUsers } from "@/lib/db/schema";
 import { requireSession } from "./session";
 
 type LogInput = {
-  actorType: "staff" | "system";
+  actorType: "staff" | "system" | "client";
   actorId?: string | null;
   entityType: string;
   entityId?: string | null;
@@ -40,7 +40,7 @@ export async function logActivity(input: LogInput): Promise<void> {
 
 export type ActivityItem = {
   id: string;
-  actorType: "staff" | "system";
+  actorType: "staff" | "system" | "client";
   actorName: string | null;
   entityType: string;
   entityId: string | null;
@@ -55,7 +55,16 @@ export async function listActivity(limit = 100): Promise<ActivityItem[]> {
     .select({
       id: activityLog.id,
       actorType: activityLog.actorType,
-      actorName: staffUsers.name,
+      /**
+       * activity_log.actor_id has no foreign key — it holds a staff_users id or
+       * a client_users id depending on actor_type. Both joins are attempted and
+       * at most one can match, because those ids are drawn from different
+       * tables. Without the second one, every portal event renders with a blank
+       * actor.
+       */
+      actorName: sql<
+        string | null
+      >`coalesce(${staffUsers.name}, ${clientUsers.name})`,
       entityType: activityLog.entityType,
       entityId: activityLog.entityId,
       action: activityLog.action,
@@ -63,6 +72,7 @@ export async function listActivity(limit = 100): Promise<ActivityItem[]> {
     })
     .from(activityLog)
     .leftJoin(staffUsers, eq(activityLog.actorId, staffUsers.id))
+    .leftJoin(clientUsers, eq(activityLog.actorId, clientUsers.id))
     .orderBy(desc(activityLog.createdAt))
     .limit(Math.min(limit, 250));
 }

@@ -6,6 +6,7 @@ import type {
   Priority,
   ClientStatus,
   ClientType,
+  ClientUserStatus,
   ClientServiceStatus,
   PaymentStatus,
   InvoiceStatus,
@@ -262,6 +263,32 @@ export const SERVICE_STATUSES: ClientServiceStatus[] = [
 
 export function ServiceStatusBadge({ status }: { status: ClientServiceStatus }) {
   return <ColorPill label={SERVICE_STATUS_LABELS[status]} colorVar={SERVICE_STATUS_VAR[status]} />;
+}
+
+/* ---- Portal access ----
+   Reuses the billing hues again: an active login reads the same green as an
+   active service, an issued-but-unused code the same amber as an unpaid one,
+   and a withdrawn login the same grey as a cancelled line.
+
+   Being LOCKED OUT is not in here on purpose. It is transient, it does not
+   change what the login is, and a locked active user is still active — a fourth
+   pill would put two coloured pills on one row and neither would read. It is a
+   chip on the row instead. */
+
+const PORTAL_ACCESS_VAR: Record<ClientUserStatus, string> = {
+  invited: "--svc-pending-fg",
+  active: "--svc-active-fg",
+  disabled: "--svc-cancelled-fg",
+};
+
+export const PORTAL_ACCESS_LABELS: Record<ClientUserStatus, string> = {
+  invited: "Not used yet",
+  active: "Active",
+  disabled: "Disabled",
+};
+
+export function PortalAccessBadge({ status }: { status: ClientUserStatus }) {
+  return <ColorPill label={PORTAL_ACCESS_LABELS[status]} colorVar={PORTAL_ACCESS_VAR[status]} />;
 }
 
 /* ---- Payment status ----

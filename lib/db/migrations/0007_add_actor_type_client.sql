@@ -1,0 +1,1 @@
+ALTER TYPE "public"."actor_type" ADD VALUE 'client';

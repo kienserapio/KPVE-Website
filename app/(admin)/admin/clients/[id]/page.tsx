@@ -6,6 +6,7 @@ import { getClient, listIndividualClients } from "@/lib/dal/clients";
 import { listServices } from "@/lib/dal/services";
 import { listActiveStaff } from "@/lib/dal/staff";
 import { listClientInvoices, invoicedServiceIds } from "@/lib/dal/invoices";
+import { listPortalUsers } from "@/lib/dal/portal-access";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { formatMoney, primaryTotal, summarize } from "@/lib/billing";
 import {
@@ -25,6 +26,7 @@ import {
   RevenueSummaryStrip,
 } from "@/components/admin/ClientServices";
 import { ClientInvoices } from "@/components/admin/ClientInvoices";
+import { ClientPortalAccess } from "@/components/admin/ClientPortalAccess";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -39,8 +41,15 @@ export default async function ClientDetailPage({
   const { id } = await params;
   if (!UUID_RE.test(id)) notFound();
 
-  const [client, staffOptions, catalogue, parentOptions, invoices, invoicedIds] =
-    await Promise.all([
+  const [
+    client,
+    staffOptions,
+    catalogue,
+    parentOptions,
+    invoices,
+    invoicedIds,
+    portalUsers,
+  ] = await Promise.all([
       getClient(id),
       listActiveStaff(),
       listServices(),
@@ -51,6 +60,10 @@ export default async function ClientDetailPage({
       // builder (a Set, flattened to an array below for the client component).
       listClientInvoices(id),
       invoicedServiceIds(id),
+      // Who can sign in to the portal as this client. Its own read rather than
+      // part of getClient(): nothing else on the page needs it, and it is the
+      // one list here that is about credentials rather than about the work.
+      listPortalUsers(id),
     ]);
   if (!client) notFound();
 
@@ -344,6 +357,27 @@ export default async function ClientDetailPage({
             </div>
             <div className="mt-4">
               <ClientNotes clientId={client.id} entries={client.timeline} />
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  Portal access
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                  Who can sign in at /portal to see their services, invoices and
+                  payments.
+                </p>
+              </div>
+              <span className="text-xs text-[var(--admin-fg-subtle)]">
+                {portalUsers.length}{" "}
+                {portalUsers.length === 1 ? "login" : "logins"}
+              </span>
+            </div>
+            <div className="mt-4">
+              <ClientPortalAccess clientId={client.id} users={portalUsers} />
             </div>
           </Card>
 

@@ -700,3 +700,73 @@ export const setInvoiceDurationSchema = z.object({
 export const payInvoiceSchema = z.object({
   token: z.string().regex(/^[a-f0-9]{32}$/, "That payment link isn't valid"),
 });
+
+/* ---------------------------------------------------------------------------
+   Client portal
+--------------------------------------------------------------------------- */
+
+/**
+ * 24 characters, mirroring CODE_LENGTH in lib/auth/portal-code.ts. Duplicated
+ * rather than imported because that module pulls in node:crypto and this file
+ * is bundled for the browser.
+ */
+const ACCESS_CODE_LENGTH = 24;
+
+/**
+ * Folds an access code back to what was issued.
+ *
+ * Codes are Crockford base32, which has no I, L, O or U, so anyone typing what
+ * they heard down the phone can only get those wrong in one direction: I and L
+ * are a 1, O is a 0. Hyphens, spaces and the lowercase they were typed in all
+ * come out. Applied inside the schema so the sign-in path and the issuing path
+ * cannot normalise differently.
+ */
+export function normalizeAccessCode(code: string): string {
+  return code
+    .toUpperCase()
+    .replace(/[IL]/g, "1")
+    .replace(/O/g, "0")
+    .replace(/[^0-9A-HJKMNP-TV-Z]/g, "");
+}
+
+/**
+ * Signing in to the client portal.
+ *
+ * The email is not a second secret — it is on every invoice we send. It is
+ * here because it names the account, so the audit trail records who tried, and
+ * because it is what a magic link would key on later.
+ */
+export const portalLoginSchema = z.object({
+  email: z.string().trim().min(1, "Email is required").max(255).transform(normalizeEmail),
+  code: z
+    .string()
+    .max(120)
+    .transform(normalizeAccessCode)
+    .refine((code) => code.length === ACCESS_CODE_LENGTH, "That access code isn't valid"),
+});
+
+/**
+ * Giving someone on this client a portal login. Staff-facing, so the messages
+ * are the schema's own rather than the deliberately blank one the sign-in form
+ * shows.
+ */
+export const issuePortalAccessSchema = z.object({
+  clientId: z.string().uuid(),
+  name: z
+    .string({ error: "Name is required" })
+    .trim()
+    .min(1, "Name is required")
+    .max(200, "Name is too long"),
+  email: z
+    .string({ error: "Email is required" })
+    .trim()
+    .min(1, "Email is required")
+    .max(255, "Email is too long")
+    .email("Enter a valid email address")
+    .transform(normalizeEmail),
+});
+
+/** Acting on one existing login — the id is ours, never typed by anyone. */
+export const portalUserIdSchema = z.object({
+  clientUserId: z.string().uuid(),
+});

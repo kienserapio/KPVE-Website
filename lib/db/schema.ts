@@ -25,7 +25,15 @@ export const leadStatusEnum = pgEnum("lead_status", [
   "archived",
 ]);
 
-export const actorTypeEnum = pgEnum("actor_type", ["staff", "system"]);
+/**
+ * Who did the thing. `staff` is a signed-in KPVE user, `client` a signed-in
+ * portal user (see `client_users`), `system` anything nobody pressed — a
+ * webhook, a failed sign-in where the actor isn't authenticated yet.
+ *
+ * Appended, never reordered: Postgres cannot drop an enum value, and drizzle
+ * rewrites every dependent column through `text` to reorder one.
+ */
+export const actorTypeEnum = pgEnum("actor_type", ["staff", "system", "client"]);
 
 /**
  * What the enquiry (or client engagement) is about. Mirrors the seven service
@@ -121,6 +129,19 @@ export const documentKindEnum = pgEnum("document_kind", [
  * than in two tables that would need joining back together on every page.
  */
 export const clientTypeEnum = pgEnum("client_type", ["individual", "company"]);
+
+/**
+ * Whether a portal login can be used. `invited` is a code issued and never
+ * used; it becomes `active` on the first successful sign-in, which is the only
+ * difference between the two — both may sign in. `disabled` is the off switch,
+ * and it is checked on EVERY request rather than only at sign-in, so revoking
+ * access ends the sessions already open (see lib/dal/portal-session.ts).
+ */
+export const clientUserStatusEnum = pgEnum("client_user_status", [
+  "invited",
+  "active",
+  "disabled",
+]);
 
 /**
  * Lifecycle of an issued document. `draft` is the only editable state: once an
@@ -299,6 +320,93 @@ export const clients = pgTable(
     // "the companies this individual owns" is a card on every individual's page.
     index("clients_parent_idx").on(table.parentClientId),
     index("clients_type_idx").on(table.clientType),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   client_users — the people who can sign in to the client portal.
+
+   A separate table rather than columns on `clients`, because a company has an
+   owner AND a bookkeeper: revoking one must not revoke the other, and "who
+   signed in" should have an answer. Cascade-deletes with its client — a login
+   to an account that no longer exists is not a record of anything.
+
+   Email is unique PER CLIENT, not globally: one individual can own several
+   `clients` rows (see `clients.parent_client_id`), and each of those accounts
+   is entered separately with its own code. Both columns in that index are NOT
+   NULL on purpose — NULLs are distinct in a btree unique index, so a nullable
+   column in a composite unique index enforces nothing at all.
+--------------------------------------------------------------------------- */
+
+export const clientUsers = pgTable(
+  "client_users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+
+    // Always stored lowercased — see normalizeEmail() in lib/validation.ts.
+    email: text("email").notNull(),
+    name: text("name").notNull(),
+    status: clientUserStatusEnum("status").notNull().default("invited"),
+
+    /* ---- The access code (see lib/auth/portal-code.ts) ----
+       The code is a 24-character token split in two. The first 8 characters
+       are the SELECTOR — not a secret, it exists so a sign-in is one indexed
+       lookup instead of a hash comparison against every row that shares an
+       email address. The remaining 16 characters are the VERIFIER, and only
+       its SHA-256 lives here.
+
+       SHA-256 rather than bcrypt on purpose: bcrypt is a defence against
+       dictionary attacks on a human-chosen password, and this is 80 bits of
+       randomness that no dictionary contains. Hashing it slowly would buy
+       nothing and hand anyone a CPU-exhaustion lever on a public endpoint.
+
+       Both are nullable: a user with access revoked keeps their row, their
+       history and their audit trail, and simply has no code. Postgres allows
+       many NULLs in a unique index, so those rows don't collide. */
+    codeSelector: text("code_selector"),
+    codeHash: text("code_hash"),
+    codeIssuedAt: timestamp("code_issued_at", { withTimezone: true }),
+    /**
+     * Codes expire. Checked in the sign-in query itself rather than in JS
+     * afterwards, so a later refactor cannot quietly drop the check.
+     */
+    codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }),
+
+    /* ---- Throttling ----
+       lib/rate-limit.ts is in-memory, which on Vercel means per-instance and
+       reset by every cold start. These two columns are the real limit: they
+       are durable, shared across instances, and survive the attacker moving
+       to another IP. Backoff doubles per failure and caps at five minutes —
+       a hard lockout would let anyone holding a client's email address deny
+       them access to their own invoices indefinitely. */
+    failedAttempts: integer("failed_attempts").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+
+    /**
+     * Sign out everywhere. Any session token issued before this instant is
+     * refused. Stamped when staff disable the user or reissue their code, so
+     * revoking a code also ends the sessions it already opened.
+     */
+    sessionsValidFrom: timestamp("sessions_valid_from", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+
+    createdBy: uuid("created_by").references(() => staffUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // One login per person per client. Also the index that serves "who can get
+    // into this account", since client_id leads it.
+    uniqueIndex("client_users_client_email_idx").on(table.clientId, table.email),
+    // The sign-in lookup. Unique so a selector can only ever address one row.
+    uniqueIndex("client_users_code_selector_idx").on(table.codeSelector),
   ],
 );
 
@@ -970,6 +1078,8 @@ export type Client = typeof clients.$inferSelect;
 export type NewClient = typeof clients.$inferInsert;
 export type ClientStatus = (typeof clientStatusEnum.enumValues)[number];
 export type ClientType = (typeof clientTypeEnum.enumValues)[number];
+export type ClientUser = typeof clientUsers.$inferSelect;
+export type ClientUserStatus = (typeof clientUserStatusEnum.enumValues)[number];
 export type ClientTask = typeof clientTasks.$inferSelect;
 export type NewClientTask = typeof clientTasks.$inferInsert;
 export type Service = typeof services.$inferSelect;
