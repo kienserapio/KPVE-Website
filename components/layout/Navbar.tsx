@@ -15,6 +15,26 @@ import {
 import { useState } from "react";
 import { NAV_LINKS } from "@/lib/data";
 
+/** Arrow-into-door — the conventional sign-in mark. */
+function LoginIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="size-4"
+    >
+      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+      <path d="m10 17 5-5-5-5" />
+      <path d="M15 12H3" />
+    </svg>
+  );
+}
+
 /** A single dock item that magnifies based on cursor proximity. */
 function DockItem({
   mouseX,
@@ -109,18 +129,6 @@ export function Navbar() {
 
         {/* Right-hand cluster — desktop only. */}
         <div className="hidden items-center gap-2 md:flex lg:gap-4">
-          {/* Existing clients only, so it stays a quiet text link rather than a
-              second button competing with the CTA. prefetch={false} because
-              almost nobody arriving on the marketing site is going here, and
-              the page behind it is dynamic. */}
-          <Link
-            href="/portal/login"
-            prefetch={false}
-            className="rounded-full px-3 py-1.5 text-sm font-medium text-muted-3 transition-colors duration-200 hover:text-white"
-          >
-            Client login
-          </Link>
-
           {/* CTA. Scrolls to the contact form on the current page (every page
               carrying the Navbar renders the #contact section). */}
           <a
@@ -129,6 +137,20 @@ export function Navbar() {
           >
             Let&rsquo;s Talk!
           </a>
+
+          {/* Existing clients only. Sits last and reads as a button in gold so
+              it is findable, but stays an outline rather than a gold fill —
+              the fill is reserved for the primary CTA. prefetch={false}
+              because almost nobody arriving on the marketing site is going
+              here, and the page behind it is dynamic. */}
+          <Link
+            href="/portal/login"
+            prefetch={false}
+            className="flex items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-5 py-2.5 text-sm font-medium text-gold-soft transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/70 hover:bg-gold/20 hover:text-gold-cream"
+          >
+            <LoginIcon />
+            Client Login
+          </Link>
         </div>
 
         {/* hamburger — mobile only */}
@@ -207,9 +229,10 @@ export function Navbar() {
                   href="/portal/login"
                   prefetch={false}
                   onClick={() => setMenuOpen(false)}
-                  className="block rounded-xl px-4 py-3 text-base font-medium text-muted-3 transition-colors duration-200 hover:bg-white/5 hover:text-white"
+                  className="flex items-center gap-2 rounded-xl border border-gold/40 bg-gold/10 px-4 py-3 text-base font-medium text-gold-soft transition-colors duration-200 hover:border-gold/70 hover:bg-gold/20 hover:text-gold-cream"
                 >
-                  Client login
+                  <LoginIcon />
+                  Client Login
                 </Link>
               </motion.div>
 
