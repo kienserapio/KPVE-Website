@@ -9,11 +9,23 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * KPVE's own timezone, pinned rather than left to the runtime.
+ *
+ * A Vercel lambda runs on UTC and a browser runs on whatever the laptop says,
+ * so an unpinned formatter renders one string on the server and another during
+ * hydration — a mismatch React warns about, and a date that is genuinely wrong
+ * for anyone reading it. Invoices, bill dates and code expiries are all business
+ * dates in Sydney; that is what they should say wherever they are rendered.
+ */
+const TIME_ZONE = "Australia/Sydney";
+
 export function formatDate(date: Date | string): string {
   return new Intl.DateTimeFormat("en-AU", {
     day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: TIME_ZONE,
   }).format(new Date(date));
 }
 
@@ -24,6 +36,7 @@ export function formatDateTime(date: Date | string): string {
     year: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: TIME_ZONE,
   }).format(new Date(date));
 }
 
