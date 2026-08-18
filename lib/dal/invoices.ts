@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/lib/db";
 import {
@@ -495,7 +495,7 @@ export async function listInvoices(filters: {
 
 export async function getInvoice(id: string): Promise<InvoiceDetail | null> {
   await requireSession();
-  return loadInvoice(eq(invoices.id, id));
+  return loadInvoiceUnchecked(eq(invoices.id, id));
 }
 
 /**
@@ -507,13 +507,24 @@ export async function getInvoice(id: string): Promise<InvoiceDetail | null> {
 export async function getInvoiceByToken(token: string): Promise<InvoiceDetail | null> {
   // Cheap shape check before touching the DB — the token is user input.
   if (!/^[a-f0-9]{32}$/.test(token)) return null;
-  const invoice = await loadInvoice(eq(invoices.publicToken, token));
+  const invoice = await loadInvoiceUnchecked(eq(invoices.publicToken, token));
   if (!invoice || invoice.status === "draft") return null;
   return invoice;
 }
 
-async function loadInvoice(
-  where: ReturnType<typeof eq>,
+/**
+ * Load one invoice by an arbitrary predicate. AUTHORIZES NOTHING — the caller
+ * is what decides who is allowed to see this, and there are exactly three:
+ * getInvoice (staff session), getInvoiceByToken (the token IS the credential)
+ * and the portal's own reader (a portal session, scoped to its own client_id).
+ *
+ * Exported so the portal does not carry a second copy of this query. A second
+ * copy is how one of them quietly stops snapshotting a column, or starts
+ * showing a draft. The `Unchecked` in the name is the whole documentation:
+ * never call it with a predicate that came from a URL alone.
+ */
+export async function loadInvoiceUnchecked(
+  where: SQL | undefined,
 ): Promise<InvoiceDetail | null> {
   const [row] = await db
     .select({
@@ -621,7 +632,7 @@ async function loadInvoice(
 }
 
 /** A `date` column comes back as 'YYYY-MM-DD'; read it as local midnight. */
-function dateOnly(value: string | Date): Date {
+export function dateOnly(value: string | Date): Date {
   if (value instanceof Date) return value;
   return new Date(`${value}T00:00:00`);
 }
