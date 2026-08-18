@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
 import { portalLogin, type PortalLoginState } from "@/lib/actions/portal-auth";
 import { AdminButton, AdminInput, AdminLabel } from "@/components/admin/ui";
@@ -9,6 +9,17 @@ const initialState: PortalLoginState = { error: null };
 
 export function PortalLoginForm({ next }: { next?: string }) {
   const [state, formAction, pending] = useActionState(portalLogin, initialState);
+
+  /**
+   * Controlled on purpose. React resets an uncontrolled form once its action
+   * resolves, so a single mistyped character wiped both fields and left the
+   * client retyping a 24-character code read off a phone call. Held in client
+   * state rather than echoed back through the action's return value: the code
+   * is a credential, and it has no business making a round trip it does not
+   * need to make.
+   */
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
 
   return (
     <form action={formAction} className="mt-6 flex flex-col gap-4">
@@ -21,6 +32,8 @@ export function PortalLoginForm({ next }: { next?: string }) {
           name="email"
           type="email"
           required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
           autoFocus
           placeholder="you@yourbusiness.com.au"
@@ -34,6 +47,8 @@ export function PortalLoginForm({ next }: { next?: string }) {
           name="code"
           type="text"
           required
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
           /* Not a password: it is read off a note or an email and typed in, and
              hiding it only produces typos in something nobody has memorised. */
           autoComplete="off"
