@@ -14,7 +14,8 @@
     "portal:issue": "tsx scripts/issue-portal-code.ts",
     "portal:demo": "tsx scripts/seed-portal-demo.ts",
     "services:seed": "tsx scripts/seed-services.ts",
-    "revenue:snapshot": "tsx scripts/snapshot-revenue.ts"
+    "revenue:snapshot": "tsx scripts/snapshot-revenue.ts",
+    "mail:verify": "tsx scripts/verify-smtp.ts"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.5.1",
@@ -24,6 +25,7 @@
     "framer-motion": "^12.42.2",
     "jose": "^6.2.3",
     "next": "16.2.10",
+    "nodemailer": "^9.0.5",
     "postgres": "^3.4.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -34,6 +36,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",

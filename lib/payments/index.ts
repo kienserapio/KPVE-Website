@@ -1,5 +1,6 @@
 import "server-only";
 
+import { appUrl } from "@/lib/utils";
 import { MockPaymentProvider } from "./mock";
 import { StripePaymentProvider } from "./stripe";
 import type { PaymentProvider, ProviderName } from "./types";
@@ -19,10 +20,9 @@ export * from "./types";
    keys still in place, which is what you want for a demo on production data.
 --------------------------------------------------------------------------- */
 
-export function appUrl(): string {
-  // Trailing slashes would produce "//pay/…" in every link we email out.
-  return (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
-}
+// Re-exported so the payment code reads as it always did; the implementation
+// moved to lib/utils when the mail templates needed it too.
+export { appUrl };
 
 export function paymentProviderName(): ProviderName {
   if (process.env.PAYMENTS_PROVIDER === "mock") return "mock";

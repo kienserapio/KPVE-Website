@@ -60,3 +60,16 @@ export function formatRelative(date: Date | string): string {
 export function initials(firstName: string, lastName: string): string {
   return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
 }
+
+/**
+ * The site's own public origin, with any trailing slash removed — a stored
+ * "https://kpve.com/" would otherwise produce "//portal/login" in every link we
+ * send out.
+ *
+ * Lives here rather than beside the payment providers that first needed it,
+ * because emails need it too and lib/payments is server-only. NEXT_PUBLIC_ so
+ * the value is the same one the browser was built with.
+ */
+export function appUrl(): string {
+  return (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/+$/, "");
+}

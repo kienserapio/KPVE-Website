@@ -1,0 +1,306 @@
+import { appUrl } from "@/lib/utils";
+
+/* ---------------------------------------------------------------------------
+   The mail the app sends, as data.
+
+   Every template returns subject, text and html together so no caller can send
+   one without the others. The text part is not a fallback nobody reads — it is
+   what a screen reader, a watch and a locked-down corporate client all show, so
+   it carries everything the HTML carries, including the walkthrough.
+
+   THE RULES OF THIS FILE, all of them forced by mail clients rather than taste:
+
+   - Tables for layout. Outlook on Windows renders through Word, which has no
+     flexbox, no grid and no reliable div background.
+   - Inline styles only. Gmail strips <style> blocks in some views, and a gold
+     heading that arrives as unstyled black text is worse than never styling it.
+   - bgcolor="" alongside every background style, for the same Word engine.
+   - No images. Not a logo, not a spacer, not a tracking pixel — most clients
+     block remote images by default, so a design that needs one arrives broken,
+     and the wordmark is type anyway.
+   - No web fonts. Bricolage and Sora are the site's faces and cannot be loaded
+     here; the stack falls through to the host's own grotesque, which is the
+     closest honest match.
+
+   The palette is the site's, from app/globals.css. Dark by design, so the
+   colour-scheme meta tags below tell Apple Mail and Gmail not to "helpfully"
+   invert it into something we never designed.
+--------------------------------------------------------------------------- */
+
+/* Surfaces */
+const INK = "#050505";
+const SURFACE = "#101010";
+const SURFACE_2 = "#1a1a1a";
+/* Lines */
+const LINE = "#202020";
+const LINE_3 = "#292929";
+/* Brand gold */
+const GOLD = "#bd8b28";
+const GOLD_BRIGHT = "#e9c04b";
+const GOLD_CREAM = "#fff1ca";
+/* Text */
+const WHITE = "#f5f5f5";
+const MUTED = "#8c8c8c";
+const MUTED_3 = "#b8b8b8";
+
+const SANS =
+  "'Bricolage Grotesque',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+const MONO = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace";
+
+export type Email = { subject: string; text: string; html: string };
+
+function formatDay(date: Date): string {
+  // Sydney, to match every other date the client is shown — see lib/utils.
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Australia/Sydney",
+  }).format(date);
+}
+
+/**
+ * Interpolated values go through this before they reach the HTML part. A
+ * client's name is staff-entered rather than public, so this is not the front
+ * line — but a name with an ampersand in it should render as a name, and the
+ * one place that reliably happens is here.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** The page the whole email sits in: dark ground, one centred card. */
+function shell(preheader: string, body: string): string {
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark">
+<title>KPVE</title>
+</head>
+<body style="margin:0;padding:0;background:${INK};color:${WHITE};font-family:${SANS};-webkit-font-smoothing:antialiased;">
+  <!-- The line shown in the inbox list beside the subject. Hidden in the body
+       itself, then padded so the client doesn't pull quoted text in after it. -->
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(preheader)}</div>
+  <div style="display:none;max-height:0;overflow:hidden;">&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${INK}" style="background:${INK};">
+    <tr><td align="center" style="padding:32px 16px;">
+
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE}" style="width:100%;max-width:560px;background:${SURFACE};border:1px solid ${LINE};border-radius:14px;">
+
+        <!-- Wordmark. Type, not an image, so a client with images off still
+             sees the brand rather than a grey placeholder box. -->
+        <tr><td style="padding:30px 32px 0;">
+          <p style="margin:0;font-family:${SANS};font-size:13px;font-weight:700;letter-spacing:5px;color:${GOLD};">KPVE</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;">
+            <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+          </table>
+        </td></tr>
+
+        <tr><td style="padding:26px 32px 32px;">${body}</td></tr>
+      </table>
+
+      <p style="margin:20px 0 0;font-family:${SANS};font-size:11px;line-height:1.6;color:${MUTED};">
+        KPVE &middot; <a href="${appUrl()}" style="color:${MUTED};text-decoration:underline;">kpve.com</a>
+      </p>
+
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+/** A gold call-to-action. A table, because Word ignores padding on an anchor. */
+function button(href: string, label: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 28px;">
+    <tr><td align="center" bgcolor="${GOLD}" style="background:${GOLD};border-radius:9px;">
+      <a href="${href}" style="display:inline-block;padding:13px 30px;font-family:${SANS};font-size:15px;font-weight:700;color:${INK};text-decoration:none;">${label}</a>
+    </td></tr>
+  </table>`;
+}
+
+/** One row of the walkthrough: a gold heading over a line of explanation. */
+function guideRow(title: string, description: string, last = false): string {
+  return `<tr><td style="padding:0 0 ${last ? "0" : "16px"};">
+    <p style="margin:0 0 3px;font-family:${SANS};font-size:14px;font-weight:700;color:${GOLD_BRIGHT};">${escapeHtml(title)}</p>
+    <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">${escapeHtml(description)}</p>
+  </td></tr>`;
+}
+
+/**
+ * What the four sections of the portal are for, in the order the sidebar lists
+ * them. Kept as data next to the template because it is the same answer in the
+ * HTML and the text part, and two copies of it would drift the first time a
+ * page is renamed. Mirrors NAV in components/portal/PortalShell.tsx.
+ */
+const PORTAL_GUIDE: Array<{ title: string; description: string }> = [
+  {
+    title: "Overview",
+    description:
+      "Where you land. Anything owing, when it's due, and what's renewing next.",
+  },
+  {
+    title: "Services",
+    description:
+      "Everything we run for you — hosting, domains, design, development — with what each costs and the date it renews.",
+  },
+  {
+    title: "Invoices",
+    description:
+      "Every invoice we've issued. Open one to pay it by card, or download the PDF for your records or your accountant.",
+  },
+  {
+    title: "Payments",
+    description:
+      "Your receipt history: everything that has been paid, and anything that didn't go through.",
+  },
+];
+
+/**
+ * The portal invitation, and the reissue — one template, because they differ
+ * only in whether the reader has been here before, and a second template would
+ * be a second place for the sign-in URL to go stale.
+ */
+export function portalAccessEmail(input: {
+  name: string;
+  email: string;
+  code: string;
+  expiresAt: Date;
+  /** True when this replaces a code they already had. */
+  reissued: boolean;
+}): Email {
+  const loginUrl = `${appUrl()}/portal/login`;
+  const expires = formatDay(input.expiresAt);
+
+  const subject = input.reissued ? "Your new KPVE access code" : "Your KPVE account";
+
+  const opening = input.reissued
+    ? "Here's a new access code for your KPVE account. The one you had before has stopped working."
+    : "Your KPVE account is ready. It's where you can see everything we run for you, what it costs, and anything that's owing — in one place, any time.";
+
+  const text = [
+    `Hi ${input.name},`,
+    "",
+    opening,
+    "",
+    "SIGNING IN",
+    `  1. Go to ${loginUrl}`,
+    `  2. Email:       ${input.email}`,
+    `  3. Access code: ${input.code}`,
+    "",
+    "The code is not case-sensitive and the dashes don't matter — type it or paste",
+    "it however it's easiest.",
+    "",
+    "FINDING YOUR WAY AROUND",
+    ...PORTAL_GUIDE.flatMap((item) => [
+      "",
+      `  ${item.title.toUpperCase()}`,
+      `    ${item.description}`,
+    ]),
+    "",
+    "PAYING AN INVOICE",
+    "  Open Invoices, choose the one you want to settle, and press Pay now. That",
+    "  opens a secure card checkout. If you've already part-paid it, you're only",
+    "  charged the balance. Bank transfer details are on the invoice itself if you",
+    "  would rather pay that way.",
+    "",
+    "A FEW THINGS WORTH KNOWING",
+    "  - The portal is read-only apart from paying. Nothing you do there can",
+    "    change a price or cancel a service — just reply to this email and we'll",
+    "    sort it out.",
+    "  - It works on your phone, and you can switch between light and dark.",
+    `  - Your code works until ${expires}. After that, ask us and we'll issue a`,
+    "    new one.",
+    "",
+    "Keep this email, or save the code somewhere safe — we can't look it up later,",
+    "only replace it. If you weren't expecting this, reply and let us know.",
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  const html = shell(
+    input.reissued
+      ? "A new access code for your KPVE account."
+      : "Your access code, and a quick tour of what's inside.",
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;line-height:1.25;font-weight:700;color:${WHITE};">
+       ${input.reissued ? "Your new access code" : "Your KPVE account is ready"}
+     </h1>
+
+     <p style="margin:0 0 10px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(input.name)},</p>
+     <p style="margin:0 0 24px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">${escapeHtml(opening)}</p>
+
+     <!-- The credential. Given its own surface because it is the one thing in
+          this email the reader has to come back and find again. -->
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border:1px solid ${LINE_3};border-radius:11px;margin:0 0 24px;">
+       <tr><td style="padding:20px 22px;">
+         <p style="margin:0 0 5px;font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${MUTED};">Your email</p>
+         <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;color:${WHITE};">${escapeHtml(input.email)}</p>
+         <p style="margin:0 0 7px;font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${MUTED};">Your access code</p>
+         <p style="margin:0;font-family:${MONO};font-size:19px;font-weight:700;letter-spacing:1.5px;color:${GOLD_CREAM};word-break:break-all;">${escapeHtml(input.code)}</p>
+       </td></tr>
+     </table>
+
+     ${button(loginUrl, "Sign in to your account")}
+
+     <p style="margin:0 0 30px;font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};">
+       The code isn't case-sensitive and the dashes don't matter — type it or paste it, whichever is easier.
+     </p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">Finding your way around</p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px;">
+       ${PORTAL_GUIDE.map((item, i) =>
+         guideRow(item.title, item.description, i === PORTAL_GUIDE.length - 1),
+       ).join("")}
+     </table>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border-left:2px solid ${GOLD};border-radius:0 8px 8px 0;margin:0 0 26px;">
+       <tr><td style="padding:16px 18px;">
+         <p style="margin:0 0 4px;font-family:${SANS};font-size:14px;font-weight:700;color:${WHITE};">Paying an invoice</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">
+           Open <strong style="color:${WHITE};font-weight:600;">Invoices</strong>, pick the one you want to settle and press <strong style="color:${WHITE};font-weight:600;">Pay now</strong> for a secure card checkout. Part-paid already? You're only charged the balance. Bank transfer details are on the invoice itself.
+         </p>
+       </td></tr>
+     </table>
+
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">A few things worth knowing</p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px;">
+       ${[
+         "The portal is read-only apart from paying — nothing you do there can change a price or cancel a service. Just reply to this email and we'll sort it out.",
+         "It works on your phone, and you can switch between light and dark.",
+         `Your code works until ${expires}. After that, ask us and we'll issue a new one.`,
+       ]
+         .map(
+           (line, i, all) => `<tr>
+           <td width="14" valign="top" style="padding:0 0 ${i === all.length - 1 ? "0" : "10px"};font-family:${SANS};font-size:14px;line-height:1.55;color:${GOLD};">&bull;</td>
+           <td valign="top" style="padding:0 0 ${i === all.length - 1 ? "0" : "10px"};font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">${escapeHtml(line)}</td>
+         </tr>`,
+         )
+         .join("")}
+     </table>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0 0 8px;font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};">
+       Keep this email, or save the code somewhere safe — we can't look it up later, only replace it.
+     </p>
+     <p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};">
+       If you weren't expecting this, reply and let us know.
+     </p>`,
+  );
+
+  return { subject, text, html };
+}

@@ -8,6 +8,7 @@ import {
   removePortalAccessAction,
   setPortalAccessAction,
   unlockPortalAccessAction,
+  type MailDelivery,
   type PortalAccessState,
 } from "@/lib/actions/portal-access";
 import type { PortalUserItem } from "@/lib/dal/portal-access";
@@ -279,6 +280,7 @@ function PortalUserRow({ user }: { user: PortalUserItem }) {
       {issued && (
         <IssuedCodePanel
           issued={issued}
+          delivery={state.delivery}
           onDone={() => {
             setDismissedIssue(state.issued);
             setConfirmingReissue(false);
@@ -313,6 +315,7 @@ function InviteForm({
     return (
       <IssuedCodePanel
         issued={issued}
+        delivery={state.delivery}
         onDone={() => {
           setDismissed(true);
           onDone();
@@ -382,9 +385,12 @@ function InviteForm({
 
 function IssuedCodePanel({
   issued,
+  delivery,
   onDone,
 }: {
   issued: NonNullable<PortalAccessState["issued"]>;
+  /** What became of the email the server tried to send. */
+  delivery?: MailDelivery;
   onDone: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -429,6 +435,7 @@ function IssuedCodePanel({
       `Access code: ${issued.code}`,
       "",
       "The code is case-insensitive and the dashes don't matter.",
+      `It works until ${formatDate(issued.expiresAt)} — after that, ask us for a new one.`,
     ].join("\n");
 
     window.location.href = `mailto:${encodeURIComponent(issued.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -449,6 +456,25 @@ function IssuedCodePanel({
         {issued.code}
       </code>
 
+      {/* Said before the buttons, because it decides which of them matters: if
+          the email went, Copy code is a convenience; if it did not, it is the
+          only way the client ever sees this. */}
+      {delivery && (
+        <p
+          className={`text-[11px] leading-relaxed ${
+            delivery.sent
+              ? "text-[var(--admin-fg-muted)]"
+              : "text-[var(--admin-warning,#c2853a)]"
+          }`}
+        >
+          {delivery.sent
+            ? `Emailed to ${issued.email}.`
+            : delivery.reason === "not_configured"
+              ? "Not emailed — no mail server is configured here. Hand it over yourself."
+              : "Couldn't email it just then. Hand it over yourself, or try the button below."}
+        </p>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -462,7 +488,7 @@ function IssuedCodePanel({
           onClick={emailIt}
           className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface-2)] hover:text-[var(--admin-fg)]"
         >
-          Email it
+          {delivery?.sent ? "Email it again" : "Email it"}
         </button>
         <button
           type="button"
