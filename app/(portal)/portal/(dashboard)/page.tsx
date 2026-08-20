@@ -26,6 +26,8 @@ import {
   SectionCard,
 } from "@/components/portal/ui";
 import { PayNowButton } from "@/components/portal/PayNowButton";
+import { AutopayStrip } from "@/components/portal/AutopayStrip";
+import { getPortalAutopay } from "@/lib/dal/autopay";
 
 /* ---------------------------------------------------------------------------
    The client's overview — the CRM's dashboard, answering the client's four
@@ -43,7 +45,7 @@ import { PayNowButton } from "@/components/portal/PayNowButton";
 export const dynamic = "force-dynamic";
 
 export default async function PortalOverviewPage() {
-  const data = await getPortalOverview();
+  const [data, autopay] = await Promise.all([getPortalOverview(), getPortalAutopay()]);
 
   const firstName = data.client.name.split(" ")[0] || "there";
   const owed = primaryAmount(data.outstanding);
@@ -118,6 +120,10 @@ export default async function PortalOverviewPage() {
             : "."}
         </Banner>
       )}
+
+      {/* Whether anything is about to leave their account by itself. Above the
+          numbers, because it changes what the numbers mean. */}
+      <AutopayStrip autopay={autopay} hasBalance={owed.cents > 0} />
 
       {/* Money first — the row this whole page exists for. */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

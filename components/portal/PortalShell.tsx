@@ -83,6 +83,16 @@ function PaymentsIcon() {
   );
 }
 
+function AutopayIcon() {
+  return (
+    <IconBase>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
+      <path d="m8 16 2.5 2.5L16 13" />
+    </IconBase>
+  );
+}
+
 function ExternalIcon() {
   return (
     <IconBase>
@@ -94,14 +104,16 @@ function ExternalIcon() {
 }
 
 /**
- * The whole surface a client can navigate to. Four entries, and every one of
- * them is a read of their own account.
+ * The whole surface a client can navigate to. Four reads of their own account,
+ * and one setting — AutoPay is the only page here that changes anything, and it
+ * changes a permission about their own card rather than any CRM record.
  */
 const NAV = [
   { href: "/portal", label: "Overview", exact: true, Icon: OverviewIcon },
   { href: "/portal/services", label: "Services", exact: false, Icon: ServicesIcon },
   { href: "/portal/invoices", label: "Invoices", exact: false, Icon: InvoicesIcon },
   { href: "/portal/payments", label: "Payments", exact: false, Icon: PaymentsIcon },
+  { href: "/portal/autopay", label: "AutoPay", exact: false, Icon: AutopayIcon },
 ];
 
 function SunIcon() {

@@ -82,6 +82,30 @@ Every billing line can mint a payment link, copy it, or email it to the client.
 - Retried webhooks are idempotent (unique index on `payments.provider_ref`), and
   pressing Pay twice on a simulated link is refused.
 
+### AutoPay — invoices that pay themselves
+A client saves a card once on **`/portal/autopay`**, and the nightly job at
+`/api/cron/autopay` charges their invoices off-session on the day each one falls
+due. Full write-up in `docs/AUTOPAY.md`.
+- **Consent is the client's to give.** Staff can turn AutoPay *off* for someone
+  who rings up and asks; there is deliberately no button that turns it on, since
+  a CRM that could manufacture the consent record would make the record
+  worthless. The exact words agreed to are stored with the timestamp and IP.
+- **Nobody is charged without warning.** A notice email goes out first, and the
+  charge is refused until that notice has been out for a full day.
+- **The double-charge guard is a row, not a rule.** `autopay_attempts` is
+  written *before* the provider is called, `unique (invoice_id, attempt_no)`
+  settles two overlapping runs into one charge, and the same key goes to Stripe
+  as an `Idempotency-Key`.
+- **Three declines in a row switches it off** and emails both sides. A card that
+  has said no three times is not going to say yes on the fourth, and retrying it
+  looks like card testing to the network.
+- Settles through `applyPaymentSucceeded()` like everything else, so an AutoPay
+  payment and a client pressing Pay now produce the same ledger row and the same
+  invoice status.
+- Off until three switches are on: `CRON_SECRET`, the schedule in `vercel.json`,
+  and the master switch in `/admin/settings` — which lives in the database so it
+  can be pulled without a deploy.
+
 ### Services — `/admin/services`
 The billable catalogue: what KPVE charges for. **Staff-created — adding "Emails,
 $11/month" is a form submission, not a migration and a deploy.**

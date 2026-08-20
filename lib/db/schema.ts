@@ -165,6 +165,20 @@ export const invoiceStatusEnum = pgEnum("invoice_status", [
  */
 export const taxModeEnum = pgEnum("tax_mode", ["none", "inclusive", "exclusive"]);
 
+/**
+ * One AutoPay charge attempt.
+ *
+ * `started` is written BEFORE the provider is called and is the state a crashed
+ * run leaves behind — it blocks the next run from charging the same invoice,
+ * because a request whose response we never saw may still have taken the money.
+ * Only the webhook (or a human) moves it on.
+ */
+export const autopayAttemptStatusEnum = pgEnum("autopay_attempt_status", [
+  "started",
+  "succeeded",
+  "failed",
+]);
+
 /* ---------------------------------------------------------------------------
    staff_users — everyone who can log into /admin.
    No public signup; seeded via scripts/create-staff-user.ts.
@@ -675,6 +689,23 @@ export const orgSettings = pgTable("org_settings", {
   accountName: text("account_name"),
   accountNumber: text("account_number"),
 
+  /* ---- AutoPay ----
+     The master switch and the three ceilings the nightly run refuses to cross.
+     They live here rather than in the env so that stopping AutoPay is a click
+     in /admin/settings at eleven at night, not a redeploy — which is exactly
+     when someone will want it.
+
+     The caps are guards, not policy: a normal run charges a handful of
+     invoices for a few hundred dollars and never approaches them. A run that
+     does is far more likely to be a bug than a good day, so it stops and says
+     what it did not do. See lib/autopay/select.ts. */
+  autopayEnabled: boolean("autopay_enabled").notNull().default(false),
+  autopayMaxInvoicesPerRun: integer("autopay_max_invoices_per_run").notNull().default(25),
+  autopayMaxCentsPerRun: integer("autopay_max_cents_per_run").notNull().default(500000),
+  autopayMaxInvoiceCents: integer("autopay_max_invoice_cents").notNull().default(200000),
+  /** Days before the due date that "we'll charge your card" goes out. */
+  autopayNoticeDays: integer("autopay_notice_days").notNull().default(3),
+
   updatedBy: uuid("updated_by").references(() => staffUsers.id, {
     onDelete: "set null",
   }),
@@ -785,6 +816,14 @@ export const invoices = pgTable(
     checkoutUrl: text("checkout_url"),
     checkoutCreatedAt: timestamp("checkout_created_at", { withTimezone: true }),
 
+    /**
+     * When the "we'll charge your card on the 30th" email went out. Stamped so
+     * the notice goes exactly once however many times the job runs, and so a
+     * client is never charged without having been told first: the run refuses
+     * an invoice whose notice has not been sent.
+     */
+    autopayNoticeSentAt: timestamp("autopay_notice_sent_at", { withTimezone: true }),
+
     sentAt: timestamp("sent_at", { withTimezone: true }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
@@ -805,6 +844,9 @@ export const invoices = pgTable(
     // The collections queue is "status = sent, due_date in the past".
     index("invoices_status_idx").on(table.status),
     index("invoices_issue_date_idx").on(table.issueDate),
+    // …and that is now a query something runs every night, so it gets the
+    // second half of its own index rather than a status scan and a filter.
+    index("invoices_status_due_date_idx").on(table.status, table.dueDate),
   ],
 );
 
@@ -926,6 +968,153 @@ export const payments = pgTable(
     // "what has been paid against this invoice" — read on every invoice screen.
     index("payments_invoice_idx").on(table.invoiceId),
     uniqueIndex("payments_provider_ref_idx").on(table.providerRef),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   client_autopay — the client's standing permission to charge their card.
+
+   One row per CLIENT, not per portal login: several people can hold logins to
+   one account (see `client_users`), and the card belongs to the business being
+   billed rather than to whichever of them happened to press the button. Which
+   of them did press it is recorded in `consent_by`.
+
+   Its own table rather than columns on `clients` because this is consent, with
+   its own lifecycle and its own audit trail. Deleting it withdraws AutoPay and
+   leaves the client record untouched.
+
+   The card itself is never here. Only Stripe's `pm_…` handle and the four
+   digits needed to say "Visa ending 4242" without a round trip on every page.
+--------------------------------------------------------------------------- */
+
+export const clientAutopay = pgTable(
+  "client_autopay",
+  {
+    clientId: uuid("client_id")
+      .primaryKey()
+      .references(() => clients.id, { onDelete: "cascade" }),
+
+    /**
+     * The switch. Separate from `payment_method_id is not null` because the two
+     * really are different states: a client can turn AutoPay off and leave the
+     * card saved, and turning it back on should not mean typing it again.
+     */
+    enabled: boolean("enabled").notNull().default(false),
+
+    /** "mock" or "stripe", same convention as `payments.provider`. */
+    provider: text("provider").notNull().default("mock"),
+
+    /** Stripe's `pm_…`. Null until a setup completes. */
+    paymentMethodId: text("payment_method_id"),
+
+    /* ---- What to show the client. Denormalised on purpose: the portal must
+       render their card without an API call per page, and these four fields
+       are refreshed by webhook whenever the network reissues the card. ---- */
+    cardBrand: text("card_brand"),
+    cardLast4: text("card_last4"),
+    cardExpMonth: integer("card_exp_month"),
+    cardExpYear: integer("card_exp_year"),
+
+    /* ---- The in-flight "save my card" checkout, mirroring the same three
+       columns on `invoices`. A setup session expires in 24 hours. ---- */
+    setupRef: text("setup_ref"),
+    setupUrl: text("setup_url"),
+    setupCreatedAt: timestamp("setup_created_at", { withTimezone: true }),
+
+    /* ---- Consent.
+
+       Card network rules and Stripe's own terms require that the client is
+       shown what they are agreeing to — that we may charge this card, when,
+       for how much, and how to stop — and that we KEEP A RECORD of the
+       agreement. That record is these five columns, and `consent_text` holds
+       the exact words shown rather than a version number, because the point of
+       the record is to survive the copy being edited later. ---- */
+    consentText: text("consent_text"),
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    consentIp: text("consent_ip"),
+    consentUserAgent: text("consent_user_agent"),
+    consentBy: uuid("consent_by").references(() => clientUsers.id, {
+      onDelete: "set null",
+    }),
+
+    enabledAt: timestamp("enabled_at", { withTimezone: true }),
+    disabledAt: timestamp("disabled_at", { withTimezone: true }),
+
+    /* ---- How it has been going. `consecutive_failures` resets on any success;
+       it is what stops the run retrying a card that three declines have already
+       proved is not going to work. ---- */
+    lastChargeAt: timestamp("last_charge_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastFailureCode: text("last_failure_code"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // The webhook arrives knowing the setup session, not the client.
+    uniqueIndex("client_autopay_setup_ref_idx").on(table.setupRef),
+    // The nightly run starts from "who has this switched on".
+    index("client_autopay_enabled_idx").on(table.enabled),
+  ],
+);
+
+/* ---------------------------------------------------------------------------
+   autopay_attempts — every time AutoPay tried to take money.
+
+   This table is the double-charge guard, and the row is written BEFORE the
+   provider is called, not after. That ordering is the whole design: a run that
+   dies between calling Stripe and hearing back leaves a `started` row, the next
+   run sees it and refuses, and a human decides — rather than the machine
+   cheerfully charging a second time because it has no memory of the first.
+
+   `unique (invoice_id, attempt_no)` makes that guard hold under a race as well:
+   two runs overlapping both compute the same next attempt number, and the
+   second INSERT fails instead of becoming a second charge.
+--------------------------------------------------------------------------- */
+
+export const autopayAttempts = pgTable(
+  "autopay_attempts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+
+    /** 1, 2, 3… for this invoice. See the unique index below. */
+    attemptNo: integer("attempt_no").notNull(),
+
+    /**
+     * `autopay_{invoice_id}_{attempt_no}` — sent to Stripe as `Idempotency-Key`
+     * and stored here so the two can never disagree. Retrying with the same key
+     * returns Stripe's original PaymentIntent rather than making another one,
+     * which is what makes a crashed-and-retried run safe.
+     */
+    idempotencyKey: text("idempotency_key").notNull(),
+
+    status: autopayAttemptStatusEnum("status").notNull().default("started"),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("AUD"),
+
+    /** `pi_…`, once the provider has given us one. */
+    paymentIntentId: text("payment_intent_id"),
+
+    /** Stripe's `code`/`decline_code` — `authentication_required` and friends. */
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("autopay_attempts_invoice_attempt_idx").on(table.invoiceId, table.attemptNo),
+    uniqueIndex("autopay_attempts_idempotency_idx").on(table.idempotencyKey),
+    // The webhook knows the PaymentIntent and nothing else.
+    index("autopay_attempts_payment_intent_idx").on(table.paymentIntentId),
+    index("autopay_attempts_client_idx").on(table.clientId),
   ],
 );
 
@@ -1099,6 +1288,11 @@ export type ClientServiceItemRow = typeof clientServiceItems.$inferSelect;
 export type Payment = typeof payments.$inferSelect;
 export type NewPayment = typeof payments.$inferInsert;
 export type PaymentStatus = (typeof paymentStatusEnum.enumValues)[number];
+export type ClientAutopay = typeof clientAutopay.$inferSelect;
+export type NewClientAutopay = typeof clientAutopay.$inferInsert;
+export type AutopayAttempt = typeof autopayAttempts.$inferSelect;
+export type NewAutopayAttempt = typeof autopayAttempts.$inferInsert;
+export type AutopayAttemptStatus = (typeof autopayAttemptStatusEnum.enumValues)[number];
 export type OrgSettings = typeof orgSettings.$inferSelect;
 export type NewOrgSettings = typeof orgSettings.$inferInsert;
 export type Invoice = typeof invoices.$inferSelect;

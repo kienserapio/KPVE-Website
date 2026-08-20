@@ -2,6 +2,8 @@ import { verifySession } from "@/lib/dal/session";
 import { getOrgSettings, invoiceReadiness } from "@/lib/dal/settings";
 import { formatTaxRate } from "@/lib/billing";
 import { Card } from "@/components/admin/ui";
+import { AutopaySettings } from "@/components/admin/AutopaySettings";
+import { getAutopaySettings } from "@/lib/dal/autopay";
 import { OrgSettings } from "@/components/admin/OrgSettings";
 
 export default async function SettingsPage() {
@@ -11,6 +13,7 @@ export default async function SettingsPage() {
   // schema defaults rather than an empty form and a save that has nothing to
   // update. See lib/dal/settings.ts.
   const settings = await getOrgSettings();
+  const autopay = await getAutopaySettings();
   const readiness = invoiceReadiness(settings);
   const blanks = readiness.filter((item) => !item.done);
 
@@ -85,6 +88,18 @@ export default async function SettingsPage() {
             </>
           )}
         </p>
+      </Card>
+
+      <Card className="p-5">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+          AutoPay
+        </h2>
+        <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+          The nightly job that pays due invoices from clients&rsquo; saved cards.
+        </p>
+        <div className="mt-4">
+          <AutopaySettings settings={autopay} />
+        </div>
       </Card>
 
       <OrgSettings settings={settings} />

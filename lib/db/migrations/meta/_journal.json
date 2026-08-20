@@ -64,6 +64,13 @@
       "when": 1787021450746,
       "tag": "0008_add_client_users",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787199755499,
+      "tag": "0009_add_autopay",
+      "breakpoints": true
     }
   ]
 }

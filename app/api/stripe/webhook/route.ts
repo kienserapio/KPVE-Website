@@ -7,6 +7,15 @@ import {
   applyPaymentSucceeded,
   applySubscriptionCancelled,
 } from "@/lib/dal/payments";
+import {
+  completeAutopaySetup,
+  detachSavedCard,
+  findAttemptByPaymentIntent,
+  findOpenAttemptByInvoice,
+  refreshSavedCard,
+  resolveAutopayAttemptFailed,
+} from "@/lib/dal/autopay-run";
+import { getPaymentProvider } from "@/lib/payments";
 
 /* ---------------------------------------------------------------------------
    Stripe webhook.
@@ -28,7 +37,9 @@ import {
    To switch this on: set STRIPE_WEBHOOK_SECRET and register
    <NEXT_PUBLIC_APP_URL>/api/stripe/webhook in the Stripe dashboard for
    checkout.session.completed, invoice.paid, invoice.payment_failed and
-   customer.subscription.deleted. Locally:
+   customer.subscription.deleted — plus, for AutoPay,
+   payment_intent.succeeded, payment_intent.payment_failed,
+   payment_method.automatically_updated and payment_method.detached. Locally:
      stripe listen --forward-to localhost:3000/api/stripe/webhook
 --------------------------------------------------------------------------- */
 
@@ -91,6 +102,90 @@ export async function POST(request: Request) {
         if (result.clientId) revalidateFor(result.clientId);
         break;
       }
+      /**
+       * A client finished saving a card. This is the ONLY place AutoPay is
+       * switched on: the button in the portal records their consent and sends
+       * them to Stripe, and the arrangement only becomes real once a card comes
+       * back — anything else would show them a promise with nothing behind it.
+       */
+      case "autopay_setup": {
+        const provider = getPaymentProvider();
+        const card = await provider.readSavedCard(normalized.setupRef);
+        if (!card) {
+          console.warn("[stripe/webhook] setup completed but saved no card", normalized.setupRef);
+          break;
+        }
+
+        const applied = await completeAutopaySetup({
+          setupRef: normalized.setupRef,
+          provider: provider.name,
+          paymentMethodId: card.paymentMethodId,
+          brand: card.brand,
+          last4: card.last4,
+          expMonth: card.expMonth,
+          expYear: card.expYear,
+          customerId: normalized.customerId,
+        });
+        if (applied?.clientId) revalidateFor(applied.clientId);
+        break;
+      }
+
+      /**
+       * A charge the run already knows about — it is told synchronously when it
+       * makes the charge. This is the case where Stripe declines asynchronously
+       * (or the run died before it heard back), so it only acts on an attempt
+       * still sitting in `started`.
+       */
+      case "autopay_failed": {
+        // By intent first, then by invoice. The second is not a nicety: an
+        // attempt is written before the charge is made, so a run that died in
+        // between never recorded which PaymentIntent it got — and that is
+        // precisely the run this branch is here to clean up after.
+        const attempt =
+          (await findAttemptByPaymentIntent(normalized.paymentIntentId)) ??
+          (normalized.invoiceId ? await findOpenAttemptByInvoice(normalized.invoiceId) : null);
+
+        if (!attempt || attempt.status !== "started") {
+          console.info("[stripe/webhook] payment_intent.payment_failed with no open attempt");
+          break;
+        }
+
+        await resolveAutopayAttemptFailed({
+          attemptId: attempt.attemptId,
+          clientId: attempt.clientId,
+          invoiceId: attempt.invoiceId,
+          paymentIntentId: normalized.paymentIntentId,
+          idempotencyKey: attempt.idempotencyKey,
+          amountCents: attempt.amountCents,
+          currency: attempt.currency,
+          code: normalized.code,
+          message: normalized.message,
+          provider: "stripe",
+        });
+        revalidateFor(attempt.clientId);
+        break;
+      }
+
+      case "card_updated": {
+        const card = await getPaymentProvider().readPaymentMethod(normalized.paymentMethodId);
+        // Only the digits change. If the read fails we keep what we have rather
+        // than blanking a card that still works.
+        if (card) {
+          await refreshSavedCard({
+            paymentMethodId: normalized.paymentMethodId,
+            brand: card.brand,
+            last4: card.last4,
+            expMonth: card.expMonth,
+            expYear: card.expYear,
+          });
+        }
+        break;
+      }
+
+      case "card_detached":
+        await detachSavedCard(normalized.paymentMethodId);
+        break;
+
       case "ignored":
         // Logged, not retried: Stripe sends far more event types than we
         // subscribe to and every one of them deserves a 200.

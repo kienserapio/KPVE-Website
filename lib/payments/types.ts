@@ -73,12 +73,103 @@ export type CheckoutSession = {
   expiresAt?: Date | null;
 };
 
+/* ---------------------------------------------------------------------------
+   AutoPay — saving a card, then charging it with nobody watching.
+
+   Two operations the ordinary checkout does not need. They are on the same
+   interface rather than a separate one because the simulator has to implement
+   both: an AutoPay path that only exists against real Stripe is a path that
+   only gets tested with real money.
+--------------------------------------------------------------------------- */
+
+/** Ask the provider for a page where the client can hand over a card. */
+export type SetupRequest = {
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  /** Existing `cus_…`, so the card lands on the customer we already have. */
+  customerId?: string | null;
+  successUrl: string;
+  cancelUrl: string;
+};
+
+/**
+ * The same shape a checkout comes back as, and deliberately so — both are "send
+ * them here, we'll hear about it on the webhook". `ref` is the setup session's
+ * id, which is what the webhook echoes.
+ */
+export type SetupSession = CheckoutSession;
+
+/** The stored card, as much of it as we are allowed to know. */
+export type SavedCard = {
+  paymentMethodId: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+};
+
+export type OffSessionCharge = {
+  invoiceId: string;
+  clientId: string;
+  customerId: string;
+  paymentMethodId: string;
+  amountCents: number;
+  currency: string;
+  /** Shows on the client's statement and in the Stripe dashboard. */
+  description: string;
+  /**
+   * `autopay_{invoice_id}_{attempt_no}` — see lib/autopay/select.ts. Sent to
+   * the provider so a retried request returns the ORIGINAL charge rather than
+   * making a second one. Never a timestamp, never random.
+   */
+  idempotencyKey: string;
+};
+
+/**
+ * Deliberately a RESULT, not a thrown error.
+ *
+ * A declined card is not an exception — it is the expected outcome of a large
+ * fraction of off-session charges, and the run has to carry on to the next
+ * invoice. Only a broken request (bad key, provider down) throws.
+ */
+export type ChargeResult =
+  | {
+      ok: true;
+      paymentIntentId: string;
+      /** `processing` for methods that settle later; the webhook finishes it. */
+      status: "succeeded" | "processing";
+      amountCents: number;
+      currency: string;
+      paidAt: Date;
+    }
+  | {
+      ok: false;
+      /** Stripe still creates one for a decline, and it carries the reason. */
+      paymentIntentId: string | null;
+      /**
+       * `authentication_required` when the bank wants 3DS and nobody is there
+       * to give it, `card_declined`, `insufficient_funds`, `expired_card`…
+       * Stored on the attempt row and used to decide whether a human is needed.
+       */
+      code: string;
+      message: string;
+    };
+
 export interface PaymentProvider {
   readonly name: ProviderName;
   /** True when no real money can move — drives the "Simulated" badges in the UI. */
   readonly simulated: boolean;
   /** Mint a payment link for one billing line. */
   createCheckout(request: CheckoutRequest): Promise<CheckoutSession>;
+  /** Mint a page that saves a card and charges nothing. */
+  createSetupSession(request: SetupRequest): Promise<SetupSession>;
+  /** Resolve a finished setup session into the card it saved. */
+  readSavedCard(setupRef: string): Promise<SavedCard | null>;
+  /** Re-read a card we already hold, after the network reissues it. */
+  readPaymentMethod(paymentMethodId: string): Promise<SavedCard | null>;
+  /** Take money from a saved card with the client nowhere near. */
+  chargeOffSession(charge: OffSessionCharge): Promise<ChargeResult>;
 }
 
 /**

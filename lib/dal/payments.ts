@@ -499,16 +499,45 @@ async function applyInvoicePaymentSucceeded(event: PaymentEvent): Promise<ApplyR
   // Void is terminal and stays terminal: money arriving against a cancelled
   // document is a refund conversation, not a reason to un-void it. The ledger
   // row above still records that it arrived.
-  if (invoice.status !== "void") {
-    const paidCents = invoice.amountPaidCents + amountCents;
-    const settled = paidCents >= invoice.totalCents;
+  if (invoice.status === "paid") {
+    // The ledger row above still records that the money arrived — refusing to
+    // write it would be worse than anything. What must not happen is the
+    // invoice quietly climbing past its own total: that is an overpayment, and
+    // an overpayment is a refund conversation with a human in it.
+    console.error("[payments] money arrived for an invoice already paid", {
+      invoiceId: invoice.id,
+      amountCents,
+      providerRef: event.providerRef,
+    });
+    await logActivity({
+      actorType: "system",
+      entityType: "invoice",
+      entityId: invoice.id,
+      action: "invoice.overpaid",
+      metadata: { amountCents, provider: event.provider },
+    });
+  } else if (invoice.status !== "void") {
+    // Every value here is computed by Postgres from the row as it stands at
+    // write time, NOT from the copy read at the top of this function.
+    //
+    // Two payments landing on one invoice at once — which AutoPay makes real,
+    // because a nightly run and a client pressing Pay now are two writers where
+    // there used to be one — would otherwise both read the same
+    // `amount_paid_cents`, both add their own amount to it, and both store the
+    // result. One increment disappears: the money is taken twice, two ledger
+    // rows say so, and the invoice quietly claims to have received half of it.
+    const paidCents = sql`${invoices.amountPaidCents} + ${amountCents}`;
+    const settled = sql`${invoices.amountPaidCents} + ${amountCents} >= ${invoices.totalCents}`;
 
     await db
       .update(invoices)
       .set({
-        status: settled ? "paid" : invoice.status,
+        status: sql`case when ${settled} then 'paid'::invoice_status else ${invoices.status} end`,
         amountPaidCents: paidCents,
-        paidAt: settled ? event.paidAt : null,
+        // ISO string, not the Date itself: a bare Date bound inside a raw sql
+        // fragment does not go through the column's encoder and the driver
+        // rejects the statement.
+        paidAt: sql`case when ${settled} then ${event.paidAt.toISOString()}::timestamptz else null end`,
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, invoice.id));

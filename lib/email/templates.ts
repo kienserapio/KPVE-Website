@@ -304,3 +304,265 @@ export function portalAccessEmail(input: {
 
   return { subject, text, html };
 }
+
+/* ---------------------------------------------------------------------------
+   AutoPay
+
+   Three emails, and between them they are the whole reason AutoPay is allowed
+   to charge a card with nobody watching: the client is told before, told after,
+   and told what to do when it fails. The card networks require the first; the
+   third is what keeps a declined card from becoming a lost client.
+--------------------------------------------------------------------------- */
+
+/** "Visa ending 4242", or a flat "your saved card" when we never got the digits. */
+function describeCard(brand: string | null, last4: string | null): string {
+  if (!last4) return "your saved card";
+  const name = brand ? brand.charAt(0).toUpperCase() + brand.slice(1) : "Card";
+  return `${name} ending ${last4}`;
+}
+
+/**
+ * The warning shot, a few days before the charge.
+ *
+ * The most important line in it is the last one: how to stop it. An AutoPay
+ * notice that a client cannot act on is not a notice, it is an announcement.
+ */
+export function autopayNoticeEmail(input: {
+  clientName: string;
+  number: string;
+  amount: string;
+  dueDate: Date;
+  cardBrand: string | null;
+  cardLast4: string | null;
+}): Email {
+  const due = formatDay(input.dueDate);
+  const card = describeCard(input.cardBrand, input.cardLast4);
+  const invoiceUrl = `${appUrl()}/portal/invoices`;
+  const autopayUrl = `${appUrl()}/portal/autopay`;
+
+  const subject = `We'll charge ${input.amount} on ${due} — ${input.number}`;
+
+  const text = [
+    `Hi ${input.clientName},`,
+    "",
+    `Invoice ${input.number} for ${input.amount} falls due on ${due}, and AutoPay is on,`,
+    `so we'll charge ${card} on that date. You don't need to do anything.`,
+    "",
+    "IF YOU'D RATHER WE DIDN'T",
+    `  Turn AutoPay off and the charge won't happen: ${autopayUrl}`,
+    "  It takes effect straight away, and your card stays saved for next time.",
+    "",
+    "THE INVOICE",
+    `  ${invoiceUrl}`,
+    "",
+    "If anything on it looks wrong, reply to this email before the due date and",
+    "we'll sort it out first.",
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  const html = shell(
+    `${input.amount} on ${due} from ${card}`,
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;font-weight:700;color:${WHITE};">A payment is coming up</h1>
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(input.clientName)},</p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border-radius:10px;margin:0 0 24px;">
+       <tr><td style="padding:18px 20px;">
+         <p style="margin:0 0 6px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">Invoice ${escapeHtml(input.number)}</p>
+         <p style="margin:0 0 4px;font-family:${MONO};font-size:26px;color:${GOLD_CREAM};">${escapeHtml(input.amount)}</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;color:${MUTED_3};">from ${escapeHtml(card)} on ${escapeHtml(due)}</p>
+       </td></tr>
+     </table>
+
+     <p style="margin:0 0 24px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">
+       You don't need to do anything — this is just so the charge isn't a surprise.
+     </p>
+
+     ${button(invoiceUrl, "View the invoice")}
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0 0 6px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">If you'd rather we didn't</p>
+     <p style="margin:0 0 8px;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">
+       <a href="${autopayUrl}" style="color:${GOLD_BRIGHT};text-decoration:underline;">Turn AutoPay off</a>
+       and this charge won't happen. It stops straight away, and your card stays saved for whenever you want it back on.
+     </p>
+     <p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">
+       If something on the invoice looks wrong, reply to this email before ${escapeHtml(due)} and we'll sort it out first.
+     </p>`,
+  );
+
+  return { subject, text, html };
+}
+
+/** The receipt. Short on purpose — the money already moved. */
+export function autopayReceiptEmail(input: {
+  clientName: string;
+  number: string;
+  amount: string;
+  paidAt: Date;
+  cardBrand: string | null;
+  cardLast4: string | null;
+}): Email {
+  const paid = formatDay(input.paidAt);
+  const card = describeCard(input.cardBrand, input.cardLast4);
+  const invoiceUrl = `${appUrl()}/portal/invoices`;
+
+  const subject = `Paid — ${input.number}, ${input.amount}`;
+
+  const text = [
+    `Hi ${input.clientName},`,
+    "",
+    `We charged ${card} ${input.amount} for invoice ${input.number} on ${paid}.`,
+    "It's paid — nothing further to do.",
+    "",
+    "YOUR RECORDS",
+    `  The invoice and a PDF of it: ${invoiceUrl}`,
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  const html = shell(
+    `${input.amount} paid from ${card}`,
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;font-weight:700;color:${WHITE};">Paid, thank you</h1>
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(input.clientName)},</p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border-radius:10px;margin:0 0 24px;">
+       <tr><td style="padding:18px 20px;">
+         <p style="margin:0 0 6px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">Invoice ${escapeHtml(input.number)}</p>
+         <p style="margin:0 0 4px;font-family:${MONO};font-size:26px;color:${GOLD_CREAM};">${escapeHtml(input.amount)}</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;color:${MUTED_3};">${escapeHtml(card)} &middot; ${escapeHtml(paid)}</p>
+       </td></tr>
+     </table>
+
+     ${button(invoiceUrl, "View or download the invoice")}
+
+     <p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">
+       Charged automatically because AutoPay is on for your account. You can turn it off at any time from your
+       <a href="${appUrl()}/portal/autopay" style="color:${MUTED};text-decoration:underline;">account page</a>.
+     </p>`,
+  );
+
+  return { subject, text, html };
+}
+
+/**
+ * The card said no.
+ *
+ * Deliberately not an apology and not an alarm. It says what happened, what it
+ * means (nothing has been taken), and gives one link that fixes it. The reason
+ * is described in plain words rather than passed through from the processor —
+ * "authentication_required" means nothing to the person holding the card.
+ */
+export function autopayFailedEmail(input: {
+  clientName: string;
+  number: string;
+  amount: string;
+  code: string;
+  cardBrand: string | null;
+  cardLast4: string | null;
+  /** True once the run has given up and switched AutoPay off. */
+  suspended: boolean;
+}): Email {
+  const card = describeCard(input.cardBrand, input.cardLast4);
+  const payUrl = `${appUrl()}/portal/invoices`;
+  const autopayUrl = `${appUrl()}/portal/autopay`;
+  const reason = FAILURE_REASONS[input.code] ?? "The payment didn't go through.";
+
+  const subject = `We couldn't charge your card — ${input.number}`;
+
+  const text = [
+    `Hi ${input.clientName},`,
+    "",
+    `We tried to charge ${card} ${input.amount} for invoice ${input.number}, and it didn't go through.`,
+    reason,
+    "",
+    "NOTHING HAS BEEN TAKEN",
+    "  The invoice is still open and we haven't tried again.",
+    "",
+    "TO PAY IT",
+    `  ${payUrl}`,
+    "  Pay it by card there, or use a different card — it only takes a moment.",
+    "",
+    input.suspended
+      ? [
+          "AUTOPAY IS OFF FOR NOW",
+          `  After a few failed attempts we've switched it off so it stops trying.`,
+          `  Save a working card and turn it back on here: ${autopayUrl}`,
+        ].join("\n")
+      : [
+          "AUTOPAY IS STILL ON",
+          `  We won't retry this charge, but we'll use your card again for the next invoice.`,
+          `  Update it here: ${autopayUrl}`,
+        ].join("\n"),
+    "",
+    "If you think this is wrong, reply to this email and we'll take a look.",
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  const html = shell(
+    `${input.amount} on ${input.number} didn't go through`,
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;font-weight:700;color:${WHITE};">We couldn't charge your card</h1>
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(input.clientName)},</p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;border-left:3px solid ${GOLD};">
+       <tr><td style="padding:2px 0 2px 16px;">
+         <p style="margin:0 0 4px;font-family:${SANS};font-size:15px;line-height:1.6;color:${WHITE};">
+           ${escapeHtml(input.amount)} for invoice ${escapeHtml(input.number)}, from ${escapeHtml(card)}.
+         </p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">${escapeHtml(reason)}</p>
+       </td></tr>
+     </table>
+
+     <p style="margin:0 0 24px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">
+       <strong style="color:${WHITE};">Nothing has been taken.</strong> The invoice is still open, and we haven't tried again.
+     </p>
+
+     ${button(payUrl, "Pay the invoice")}
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0 0 6px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">
+       ${input.suspended ? "AutoPay is off for now" : "AutoPay is still on"}
+     </p>
+     <p style="margin:0 0 8px;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">
+       ${
+         input.suspended
+           ? `After a few failed attempts we've switched it off so it stops trying. <a href="${autopayUrl}" style="color:${GOLD_BRIGHT};text-decoration:underline;">Save a working card</a> to turn it back on.`
+           : `We won't retry this charge, but we'll use your card again for the next invoice. <a href="${autopayUrl}" style="color:${GOLD_BRIGHT};text-decoration:underline;">Update it here</a> if it's changed.`
+       }
+     </p>
+     <p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">
+       If you think this is wrong, reply to this email and we'll take a look.
+     </p>`,
+  );
+
+  return { subject, text, html };
+}
+
+/**
+ * Processor codes, in words the cardholder can act on.
+ *
+ * `authentication_required` is the one that matters most and the one nobody
+ * outside payments has heard of: the bank wanted the client to confirm the
+ * payment, and there was nobody there to do it. That is not a decline, and
+ * saying "your card was declined" would send them to their bank for nothing.
+ */
+const FAILURE_REASONS: Record<string, string> = {
+  authentication_required:
+    "Your bank wanted you to confirm the payment, and an automatic charge can't ask you to. Paying it yourself will work.",
+  insufficient_funds: "There weren't enough funds available on the card.",
+  card_declined: "Your bank declined the charge.",
+  expired_card: "The card has expired.",
+  incorrect_cvc: "The card's security code was rejected.",
+  processing_error: "The card network had a problem processing it.",
+  card_not_supported: "That card doesn't support this kind of payment.",
+};

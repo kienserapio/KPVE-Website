@@ -7,6 +7,7 @@ import { listServices } from "@/lib/dal/services";
 import { listActiveStaff } from "@/lib/dal/staff";
 import { listClientInvoices, invoicedServiceIds } from "@/lib/dal/invoices";
 import { listPortalUsers } from "@/lib/dal/portal-access";
+import { getClientAutopay } from "@/lib/dal/autopay";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { formatMoney, primaryTotal, summarize } from "@/lib/billing";
 import {
@@ -27,6 +28,7 @@ import {
 } from "@/components/admin/ClientServices";
 import { ClientInvoices } from "@/components/admin/ClientInvoices";
 import { ClientPortalAccess } from "@/components/admin/ClientPortalAccess";
+import { ClientAutopay } from "@/components/admin/ClientAutopay";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -49,6 +51,7 @@ export default async function ClientDetailPage({
     invoices,
     invoicedIds,
     portalUsers,
+    autopay,
   ] = await Promise.all([
       getClient(id),
       listActiveStaff(),
@@ -64,6 +67,9 @@ export default async function ClientDetailPage({
       // part of getClient(): nothing else on the page needs it, and it is the
       // one list here that is about credentials rather than about the work.
       listPortalUsers(id),
+      // Same reasoning as the line above: its own read, because it is about a
+      // standing permission over a card rather than about the work.
+      getClientAutopay(id),
     ]);
   if (!client) notFound();
 
@@ -378,6 +384,23 @@ export default async function ClientDetailPage({
             </div>
             <div className="mt-4">
               <ClientPortalAccess clientId={client.id} users={portalUsers} />
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--admin-fg-subtle)]">
+                  AutoPay
+                </h2>
+                <p className="mt-0.5 text-xs text-[var(--admin-fg-subtle)]">
+                  Whether their invoices are paid automatically from a card they
+                  saved.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4">
+              <ClientAutopay clientId={client.id} autopay={autopay} />
             </div>
           </Card>
 

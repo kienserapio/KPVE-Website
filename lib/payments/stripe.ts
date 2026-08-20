@@ -5,10 +5,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { BillingInterval } from "@/lib/db/schema";
 import {
   PaymentProviderError,
+  type ChargeResult,
   type CheckoutRequest,
   type CheckoutSession,
+  type OffSessionCharge,
   type PaymentEvent,
   type PaymentProvider,
+  type SavedCard,
+  type SetupRequest,
+  type SetupSession,
 } from "./types";
 
 /* ---------------------------------------------------------------------------
@@ -102,6 +107,16 @@ async function stripeRequest<T>(
   path: string,
   body: Record<string, Encodable>,
   secretKey: string,
+  options: {
+    /**
+     * Stripe stores the first response for a key for 24 hours and replays it
+     * for any retry carrying the same one. This is what makes a charge safe to
+     * repeat after a lost response: the retry returns the original
+     * PaymentIntent instead of creating a second one. Only ever set from a
+     * value derived from what is being paid — never a timestamp.
+     */
+    idempotencyKey?: string;
+  } = {},
 ): Promise<T> {
   const response = await fetch(`${STRIPE_API}${path}`, {
     method: "POST",
@@ -109,10 +124,39 @@ async function stripeRequest<T>(
       Authorization: `Bearer ${secretKey}`,
       "Content-Type": "application/x-www-form-urlencoded",
       "Stripe-Version": STRIPE_API_VERSION,
+      ...(options.idempotencyKey
+        ? { "Idempotency-Key": options.idempotencyKey }
+        : {}),
     },
     body: new URLSearchParams(flatten(body)).toString(),
     // Never cached: this is a write, and a cached checkout session would be a
     // second client paying against the first one's link.
+    cache: "no-store",
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { error?: { message?: string; type?: string } }
+    | null;
+
+  if (!response.ok) {
+    const message = payload?.error?.message ?? `Stripe returned ${response.status}`;
+    throw new PaymentProviderError(message, payload?.error);
+  }
+
+  return payload as T;
+}
+
+/**
+ * The read side. Separate from stripeRequest because a GET carries no body and
+ * must never carry an idempotency key — Stripe ignores them on reads, and a key
+ * on a read is a sign someone has copied the wrong helper.
+ */
+async function stripeGet<T>(path: string, secretKey: string): Promise<T> {
+  const response = await fetch(`${STRIPE_API}${path}`, {
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      "Stripe-Version": STRIPE_API_VERSION,
+    },
     cache: "no-store",
   });
 
@@ -137,6 +181,23 @@ type StripeCheckoutSession = {
   url: string | null;
   customer: string | null;
   expires_at?: number;
+};
+
+type StripePaymentMethod = {
+  id: string;
+  card?: {
+    brand?: string | null;
+    last4?: string | null;
+    exp_month?: number | null;
+    exp_year?: number | null;
+  } | null;
+};
+
+type StripePaymentIntent = {
+  id: string;
+  status: string;
+  amount?: number;
+  currency?: string;
 };
 
 export class StripePaymentProvider implements PaymentProvider {
@@ -247,6 +308,215 @@ export class StripePaymentProvider implements PaymentProvider {
       replacedCustomer,
       expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
     };
+  }
+
+  /* -------------------------------------------------------------------------
+     AutoPay
+  ------------------------------------------------------------------------- */
+
+  /**
+   * A Checkout Session in `mode: "setup"` — the card form with no amount on it.
+   *
+   * Unlike a payment checkout, this one REQUIRES a customer: a card saved
+   * against nobody cannot be charged again later, which is the entire point.
+   * So a client who has never paid gets a Stripe customer created here rather
+   * than at their first payment.
+   */
+  async createSetupSession(request: SetupRequest): Promise<SetupSession> {
+    const metadata = { client_id: request.clientId, kpve_autopay: "1" };
+
+    const body = (customer: string): Record<string, Encodable> => ({
+      mode: "setup",
+      customer,
+      // Cards only. The other methods Stripe would offer here either cannot be
+      // charged off-session or need mandates this flow does not collect.
+      payment_method_types: ["card"],
+      success_url: request.successUrl,
+      cancel_url: request.cancelUrl,
+      client_reference_id: request.clientId,
+      metadata,
+      setup_intent_data: { metadata },
+    });
+
+    const existing = request.customerId?.startsWith("cus_") ? request.customerId : null;
+    let customerId = existing ?? (await this.createCustomer(request));
+    let replacedCustomer = existing === null;
+    let session: StripeCheckoutSession;
+
+    try {
+      session = await stripeRequest<StripeCheckoutSession>(
+        "/checkout/sessions",
+        body(customerId),
+        this.secretKey,
+      );
+    } catch (error) {
+      // Same recovery as createCheckout: a `cus_…` minted in test mode does not
+      // exist once live keys go in, and it is indistinguishable by prefix.
+      if (!existing || !isMissingCustomer(error)) throw error;
+
+      console.warn(
+        "[stripe] stored customer id was rejected — creating a new customer for this setup",
+      );
+      customerId = await this.createCustomer(request);
+      replacedCustomer = true;
+      session = await stripeRequest<StripeCheckoutSession>(
+        "/checkout/sessions",
+        body(customerId),
+        this.secretKey,
+      );
+    }
+
+    if (!session.url) {
+      throw new PaymentProviderError("Stripe created the setup session but returned no URL.");
+    }
+
+    return {
+      provider: "stripe",
+      ref: session.id,
+      url: session.url,
+      customerId: session.customer ?? customerId,
+      replacedCustomer,
+      expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null,
+    };
+  }
+
+  private async createCustomer(request: SetupRequest): Promise<string> {
+    const customer = await stripeRequest<{ id: string }>(
+      "/customers",
+      {
+        email: request.clientEmail,
+        name: request.clientName,
+        metadata: { client_id: request.clientId },
+      },
+      this.secretKey,
+    );
+    return customer.id;
+  }
+
+  /**
+   * Session → SetupIntent → PaymentMethod. Three reads, because Stripe hands
+   * the card back one indirection at a time and none of them can be skipped.
+   *
+   * Returns null rather than throwing when the session exists but saved
+   * nothing: an abandoned setup is an ordinary outcome, not a fault.
+   */
+  async readSavedCard(setupRef: string): Promise<SavedCard | null> {
+    const session = await stripeGet<{
+      setup_intent: string | { id: string } | null;
+      status: string | null;
+    }>(`/checkout/sessions/${encodeURIComponent(setupRef)}`, this.secretKey);
+
+    const setupIntentId =
+      typeof session.setup_intent === "string"
+        ? session.setup_intent
+        : (session.setup_intent?.id ?? null);
+    if (!setupIntentId) return null;
+
+    const setupIntent = await stripeGet<{
+      payment_method: string | { id: string } | null;
+      status: string | null;
+    }>(`/setup_intents/${encodeURIComponent(setupIntentId)}`, this.secretKey);
+
+    const paymentMethodId =
+      typeof setupIntent.payment_method === "string"
+        ? setupIntent.payment_method
+        : (setupIntent.payment_method?.id ?? null);
+    if (!paymentMethodId) return null;
+
+    return this.readPaymentMethod(paymentMethodId);
+  }
+
+  async readPaymentMethod(paymentMethodId: string): Promise<SavedCard | null> {
+    const method = await stripeGet<StripePaymentMethod>(
+      `/payment_methods/${encodeURIComponent(paymentMethodId)}`,
+      this.secretKey,
+    );
+    if (!method?.id) return null;
+
+    return {
+      paymentMethodId: method.id,
+      brand: method.card?.brand ?? null,
+      last4: method.card?.last4 ?? null,
+      expMonth: method.card?.exp_month ?? null,
+      expYear: method.card?.exp_year ?? null,
+    };
+  }
+
+  /**
+   * Charge a saved card with nobody watching.
+   *
+   * `off_session: true` tells Stripe there is no one there to answer a 3DS
+   * prompt, which changes how the issuer is asked and what a failure means.
+   * `confirm: true` makes it one round trip instead of two.
+   *
+   * A decline comes back as a 402 — an exception at the HTTP layer, but an
+   * ordinary Tuesday for a business. It is caught here and returned as a
+   * result, so a run of twenty invoices does not stop at the first bad card.
+   */
+  async chargeOffSession(charge: OffSessionCharge): Promise<ChargeResult> {
+    const metadata = {
+      // Never `invoice_id`: Stripe has its own invoices and a handler reading
+      // the wrong key would settle the wrong document. Same rule as checkout.
+      kpve_invoice_id: charge.invoiceId,
+      client_id: charge.clientId,
+      kpve_autopay: "1",
+    };
+
+    try {
+      const intent = await stripeRequest<StripePaymentIntent>(
+        "/payment_intents",
+        {
+          amount: charge.amountCents,
+          currency: charge.currency.toLowerCase(),
+          customer: charge.customerId,
+          payment_method: charge.paymentMethodId,
+          off_session: true,
+          confirm: true,
+          description: charge.description,
+          metadata,
+        },
+        this.secretKey,
+        { idempotencyKey: charge.idempotencyKey },
+      );
+
+      if (intent.status === "succeeded" || intent.status === "processing") {
+        return {
+          ok: true,
+          paymentIntentId: intent.id,
+          status: intent.status,
+          amountCents: intent.amount ?? charge.amountCents,
+          currency: (intent.currency ?? charge.currency).toUpperCase(),
+          paidAt: new Date(),
+        };
+      }
+
+      // Anything else needs the client back in front of a browser, which is
+      // the one thing an off-session charge cannot arrange.
+      return {
+        ok: false,
+        paymentIntentId: intent.id,
+        code: intent.status === "requires_action" ? "authentication_required" : intent.status,
+        message: "The card needs the account holder to confirm the payment.",
+      };
+    } catch (error) {
+      if (!(error instanceof PaymentProviderError)) throw error;
+
+      const detail = error.detail as
+        | { code?: string; decline_code?: string; payment_intent?: { id?: string } }
+        | undefined;
+
+      // `decline_code` is the specific reason ("insufficient_funds"); `code` is
+      // the general one ("card_declined"). The specific one is more use to the
+      // person who has to fix it.
+      const code = detail?.decline_code ?? detail?.code ?? "provider_error";
+
+      return {
+        ok: false,
+        paymentIntentId: detail?.payment_intent?.id ?? null,
+        code,
+        message: error.message,
+      };
+    }
   }
 }
 
@@ -389,6 +659,17 @@ export type NormalizedStripeEvent =
   | { kind: "succeeded"; payment: PaymentEvent }
   | { kind: "failed"; clientServiceId: string; reason: string; providerRef: string }
   | { kind: "cancelled"; clientServiceId: string; providerRef: string }
+  /* ---- AutoPay ---- */
+  | { kind: "autopay_setup"; setupRef: string; customerId: string | null }
+  | {
+      kind: "autopay_failed";
+      paymentIntentId: string;
+      invoiceId: string | null;
+      code: string;
+      message: string;
+    }
+  | { kind: "card_updated"; paymentMethodId: string }
+  | { kind: "card_detached"; paymentMethodId: string }
   | { kind: "ignored"; reason: string };
 
 export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent {
@@ -398,6 +679,17 @@ export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent 
 
   switch (event.type) {
     case "checkout.session.completed": {
+      // A setup session saves a card and moves no money at all, so it is
+      // answered before the payment checks below — `payment_status` on one of
+      // these is "no_payment_required", which the paid check would discard.
+      if (str(object.mode) === "setup") {
+        return {
+          kind: "autopay_setup",
+          setupRef: str(object.id) ?? "",
+          customerId: str(object.customer),
+        };
+      }
+
       // `complete` + `paid` is the only combination that means money moved;
       // async methods (BECS, bank debit) complete the session while still
       // unpaid and settle later via invoice.paid / payment_intent.succeeded.
@@ -453,6 +745,88 @@ export function normalizeStripeEvent(event: StripeEvent): NormalizedStripeEvent 
         providerRef: event.id,
         reason: "The card was declined or the payment failed.",
       };
+    }
+
+    /**
+     * An AutoPay charge, coming back the long way round.
+     *
+     * The run already applied this payment when the charge returned — see
+     * chargeOne() in lib/autopay/run.ts. This is the safety net for the case
+     * where the run died between Stripe taking the money and us recording it.
+     * `providerRef` is deliberately the PaymentIntent id and NOT `event.id`, so
+     * that when both paths do run the unique index on payments.provider_ref
+     * sees them as one payment rather than two.
+     */
+    case "payment_intent.succeeded": {
+      if (!invoiceId) return { kind: "ignored", reason: "no invoice id" };
+
+      // ONLY AutoPay's own charges. An ordinary Checkout payment fires this
+      // event too — its PaymentIntent inherits `kpve_invoice_id` from
+      // payment_intent_data — and checkout.session.completed has already
+      // settled it under a different provider_ref (the event id). Acting on
+      // both would write two ledger rows for one card payment, credit the
+      // invoice twice, and show the client two charges in their own history.
+      const metadata = object.metadata as Record<string, unknown> | undefined;
+      if (str(metadata?.kpve_autopay) !== "1") {
+        return { kind: "ignored", reason: "checkout payment, settled by its session event" };
+      }
+
+      return {
+        kind: "succeeded",
+        payment: {
+          provider: "stripe",
+          providerRef: str(object.id) ?? event.id,
+          clientServiceId,
+          invoiceId,
+          amountCents: num(object.amount_received) ?? num(object.amount) ?? 0,
+          currency: (str(object.currency) ?? "aud").toUpperCase(),
+          paidAt: new Date(event.created * 1000),
+          customerId: str(object.customer),
+          description: "AutoPay",
+        },
+      };
+    }
+
+    case "payment_intent.payment_failed": {
+      const paymentIntentId = str(object.id);
+      if (!paymentIntentId) return { kind: "ignored", reason: "no payment intent id" };
+
+      // Same reasoning as the branch above: a client abandoning a card on
+      // Stripe's own checkout page is not an AutoPay failure and must not
+      // count against their card.
+      const failedMetadata = object.metadata as Record<string, unknown> | undefined;
+      if (str(failedMetadata?.kpve_autopay) !== "1") {
+        return { kind: "ignored", reason: "not an AutoPay charge" };
+      }
+
+      const error = object.last_payment_error as
+        | { code?: string; decline_code?: string; message?: string }
+        | undefined;
+
+      return {
+        kind: "autopay_failed",
+        paymentIntentId,
+        invoiceId,
+        code: error?.decline_code ?? error?.code ?? "card_declined",
+        message: error?.message ?? "The payment failed.",
+      };
+    }
+
+    /**
+     * The card networks reissue cards and Stripe follows them. Taking the new
+     * digits keeps "Visa ending 4242" honest and keeps a perfectly good
+     * arrangement from dying on an expiry date.
+     */
+    case "payment_method.automatically_updated": {
+      const paymentMethodId = str(object.id);
+      if (!paymentMethodId) return { kind: "ignored", reason: "no payment method id" };
+      return { kind: "card_updated", paymentMethodId };
+    }
+
+    case "payment_method.detached": {
+      const paymentMethodId = str(object.id);
+      if (!paymentMethodId) return { kind: "ignored", reason: "no payment method id" };
+      return { kind: "card_detached", paymentMethodId };
     }
 
     case "customer.subscription.deleted": {
