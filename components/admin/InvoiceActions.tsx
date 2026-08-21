@@ -24,9 +24,11 @@ import {
    so InvoiceDocument can stay a pure, printable server component. The whole bar
    is `no-print`: it must never appear on the page the client files.
 
-   Buttons reflect the status because the model does: draft is the only editable,
-   deletable state; a sent invoice is void-and-reissue, not edit. The DAL enforces
-   the same transitions, so a stale button can't do anything the model forbids.
+   Buttons reflect the status because the model does: draft is the only editable
+   state; a sent invoice is void-and-reissue, not edit. Delete shows on a draft
+   and on a void record — never on a live one, where the number has to stay put.
+   The DAL enforces the same rules, so a stale button can't do anything the model
+   forbids.
 --------------------------------------------------------------------------- */
 
 const secondaryClass =
@@ -144,29 +146,13 @@ export function InvoiceActions({
             <StatusForm invoiceId={invoiceId} status="sent">
               <AdminButton type="submit">Send</AdminButton>
             </StatusForm>
-            {confirmingDelete ? (
-              <form action={deleteInvoiceAction} className="inline-flex items-center gap-2">
-                <input type="hidden" name="invoiceId" value={invoiceId} />
-                <AdminButton type="submit" variant="danger">
-                  Delete permanently
-                </AdminButton>
-                <button
-                  type="button"
-                  onClick={() => setConfirmingDelete(false)}
-                  className="text-sm text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
-                >
-                  Cancel
-                </button>
-              </form>
-            ) : (
-              <AdminButton
-                type="button"
-                variant="secondary"
-                onClick={() => setConfirmingDelete(true)}
-              >
-                Delete draft
-              </AdminButton>
-            )}
+            <DeleteControl
+              invoiceId={invoiceId}
+              label="Delete draft"
+              confirming={confirmingDelete}
+              onAsk={() => setConfirmingDelete(true)}
+              onCancel={() => setConfirmingDelete(false)}
+            />
           </>
         )}
 
@@ -190,6 +176,20 @@ export function InvoiceActions({
             confirming={confirmingVoid}
             onAsk={() => setConfirmingVoid(true)}
             onCancel={() => setConfirmingVoid(false)}
+          />
+        )}
+
+        {/* A void invoice is already closed: the client can't see it and it
+            counts for nothing. Deleting it just takes the row off the list, so
+            it's the one live-invoice tidy-up offered — and only from here, one
+            deliberate step after the void. */}
+        {status === "void" && (
+          <DeleteControl
+            invoiceId={invoiceId}
+            label="Delete permanently"
+            confirming={confirmingDelete}
+            onAsk={() => setConfirmingDelete(true)}
+            onCancel={() => setConfirmingDelete(false)}
           />
         )}
 
@@ -249,7 +249,7 @@ export function InvoiceActions({
         {status === "draft"
           ? "This is a draft — edit or delete it freely. The client link goes live once you send it."
           : status === "void"
-            ? "This invoice is void. A voided invoice is a closed record; raise a new one if needed."
+            ? "This invoice is void. A voided invoice is a closed record; raise a new one if needed, or delete it to take it off the list for good."
             : "A sent invoice can't be edited — only voided and reissued."}
       </p>
     </div>
@@ -370,6 +370,52 @@ function VoidControl({
       <input type="hidden" name="status" value="void" />
       <AdminButton type="submit" variant="danger">
         Void this invoice
+      </AdminButton>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-sm text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
+      >
+        Cancel
+      </button>
+    </form>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Delete — two presses, always. The second button says what it does rather than
+   "Confirm", because the row it removes does not come back.
+--------------------------------------------------------------------------- */
+
+function DeleteControl({
+  invoiceId,
+  label,
+  confirming,
+  onAsk,
+  onCancel,
+  redirectTo,
+}: {
+  invoiceId: string;
+  label: string;
+  confirming: boolean;
+  onAsk: () => void;
+  onCancel: () => void;
+  /** Where to land afterwards. Defaults to the invoice list. */
+  redirectTo?: string;
+}) {
+  if (!confirming) {
+    return (
+      <AdminButton type="button" variant="secondary" onClick={onAsk}>
+        {label}
+      </AdminButton>
+    );
+  }
+  return (
+    <form action={deleteInvoiceAction} className="inline-flex items-center gap-2">
+      <input type="hidden" name="invoiceId" value={invoiceId} />
+      {redirectTo && <input type="hidden" name="redirectTo" value={redirectTo} />}
+      <AdminButton type="submit" variant="danger">
+        Delete permanently
       </AdminButton>
       <button
         type="button"

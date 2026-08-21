@@ -40,6 +40,8 @@ function mapError(error: unknown): string {
         return "That status change isn't allowed from where this invoice is.";
       case "NOT_DRAFT":
         return "Only a draft invoice can be changed. Void it and reissue instead.";
+      case "NOT_DELETABLE":
+        return "A live invoice can't be deleted. Void it first, then delete it.";
       case "NUMBER_ALLOCATION_FAILED":
         return "Couldn't allocate an invoice number — try again.";
     }
@@ -115,7 +117,8 @@ export async function setInvoiceStatusAction(formData: FormData): Promise<void> 
 }
 
 /* ---------------------------------------------------------------------------
-   Edit / delete — draft only, enforced in the DAL.
+   Edit / delete — edits are draft-only; delete also allows a void record.
+   Both enforced in the DAL.
 --------------------------------------------------------------------------- */
 
 export async function updateInvoiceAction(
@@ -288,9 +291,19 @@ export async function resyncInvoiceAction(formData: FormData): Promise<void> {
   }
 }
 
+/* Delete — draft or void only; the DAL is the one that decides that.
+
+   `redirectTo` exists because this button now has two homes. Pressed on the
+   invoice page there is no page left to return to, so it lands on the list;
+   pressed on a client's Invoices card the row simply disappears and staff stay
+   where they were working. Only same-site paths are honoured, so a crafted
+   form can't turn a delete into an open redirect. */
 export async function deleteInvoiceAction(formData: FormData): Promise<void> {
   const invoiceId = String(formData.get("invoiceId") ?? "");
   if (!invoiceId) return;
+
+  const requested = String(formData.get("redirectTo") ?? "");
+  const returnTo = requested.startsWith("/") && !requested.startsWith("//") ? requested : null;
 
   let clientId: string;
   try {
@@ -298,10 +311,10 @@ export async function deleteInvoiceAction(formData: FormData): Promise<void> {
     ({ clientId } = await deleteInvoice(invoiceId));
   } catch (error) {
     console.error("[deleteInvoiceAction]", error);
-    redirect(`/admin/invoices/${invoiceId}`);
+    redirect(returnTo ?? `/admin/invoices/${invoiceId}`);
   }
 
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/clients/${clientId}`);
-  redirect("/admin/invoices");
+  redirect(returnTo ?? "/admin/invoices");
 }

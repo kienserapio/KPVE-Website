@@ -1086,9 +1086,19 @@ export async function deleteInvoice(id: string): Promise<{ clientId: string }> {
     .where(eq(invoices.id, id))
     .limit(1);
   if (!current) throw new Error("NOT_FOUND");
-  // A sent invoice is a record. It is voided, never deleted — deleting it would
-  // punch a hole in the number sequence, which is the first thing an auditor asks about.
-  if (current.status !== "draft") throw new Error("NOT_DRAFT");
+  // A LIVE invoice is a record. Sent or paid, it is voided, never deleted —
+  // deleting it would punch a hole in the number sequence, which is the first
+  // thing an auditor asks about.
+  //
+  // Void is the exception. By then the document is already a closed record: the
+  // client can't see it (portal shows sent + paid only), the client's totals
+  // skip it, and its number is spent. Removing the row is a tidy-up of a list,
+  // not a rewrite of history — and the activity entry below keeps the number on
+  // file regardless. So the route to deleting a sent invoice is void-then-delete,
+  // which forces the deliberate step rather than offering a one-press hole.
+  if (current.status !== "draft" && current.status !== "void") {
+    throw new Error("NOT_DELETABLE");
+  }
 
   await db.delete(invoices).where(eq(invoices.id, id));
 
@@ -1098,7 +1108,7 @@ export async function deleteInvoice(id: string): Promise<{ clientId: string }> {
     entityType: "invoice",
     entityId: id,
     action: "invoice.deleted",
-    metadata: { number: current.number, wasDraft: true },
+    metadata: { number: current.number, status: current.status },
   });
 
   return { clientId: current.clientId };

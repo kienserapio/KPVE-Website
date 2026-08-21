@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import {
   createInvoiceAction,
+  deleteInvoiceAction,
   type InvoiceActionState,
 } from "@/lib/actions/invoices";
 import type { InvoiceListItem } from "@/lib/dal/invoices";
@@ -108,6 +109,14 @@ export function ClientInvoices({
                   PDF
                 </a>
               )}
+              {/* Removable straight from the list, so clearing out drafts and
+                  voided records doesn't mean opening each one. Same two rules
+                  as the invoice page, enforced in the DAL either way: a draft
+                  isn't a document yet, and a void one is already closed. A
+                  sent or paid invoice has no Delete here at all. */}
+              {(invoice.status === "draft" || invoice.status === "void") && (
+                <RowDelete invoiceId={invoice.id} clientId={clientId} />
+              )}
             </li>
           ))}
         </ul>
@@ -139,6 +148,45 @@ export function ClientInvoices({
         </div>
       )}
     </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Row-level delete. Two presses, and the second one names the act — the row it
+   removes does not come back. Deliberately quiet until asked: this card is read
+   far more often than it is pruned.
+--------------------------------------------------------------------------- */
+
+function RowDelete({ invoiceId, clientId }: { invoiceId: string; clientId: string }) {
+  const [confirming, setConfirming] = useState(false);
+
+  if (!confirming) {
+    return (
+      <button
+        type="button"
+        onClick={() => setConfirming(true)}
+        className="shrink-0 text-xs font-medium text-[var(--admin-fg-subtle)] transition hover:text-red-500"
+      >
+        Delete
+      </button>
+    );
+  }
+
+  return (
+    <form action={deleteInvoiceAction} className="inline-flex shrink-0 items-center gap-2">
+      <input type="hidden" name="invoiceId" value={invoiceId} />
+      <input type="hidden" name="redirectTo" value={`/admin/clients/${clientId}`} />
+      <button type="submit" className="text-xs font-semibold text-red-500 transition hover:underline">
+        Delete for good
+      </button>
+      <button
+        type="button"
+        onClick={() => setConfirming(false)}
+        className="text-xs text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
+      >
+        Cancel
+      </button>
+    </form>
   );
 }
 
