@@ -18,6 +18,7 @@ import {
   INVOICE_STATUSES,
 } from "@/components/admin/ui";
 import { InvoiceFilters } from "@/components/admin/InvoiceFilters";
+import { InvoiceRowDelete } from "@/components/admin/InvoiceRowDelete";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,6 +53,14 @@ export default async function InvoicesPage({
   // every one carries it, so no extra lookup just to label the filter.
   const clientName = client ? invoices[0]?.clientName : undefined;
   const hasFilters = Boolean(status || client);
+
+  // Where a row delete lands: this same view, filters and all. Pruning a
+  // filtered queue shouldn't dump staff back at the unfiltered top of the list.
+  const filterQuery = new URLSearchParams({
+    ...(status ? { status } : {}),
+    ...(client ? { client } : {}),
+  }).toString();
+  const returnTo = `/admin/invoices${filterQuery ? `?${filterQuery}` : ""}`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -128,6 +137,9 @@ export default async function InvoicesPage({
                   <Th>Due</Th>
                   <Th className="text-right">Total</Th>
                   <Th>Status</Th>
+                  <Th className="text-right">
+                    <span className="sr-only">Actions</span>
+                  </Th>
                 </tr>
               </thead>
               <tbody>
@@ -180,6 +192,17 @@ export default async function InvoicesPage({
                     </Td>
                     <Td>
                       <InvoiceStatusBadge status={invoice.status} />
+                    </Td>
+                    {/* Prunable straight from the list, so clearing out drafts
+                        and voided records doesn't mean opening each one. Same
+                        two rules as everywhere else, and the DAL enforces them
+                        either way: a draft isn't a document yet, and a void one
+                        is already a closed record. Sent and paid have no Delete
+                        here at all — they are voided first, on their own page. */}
+                    <Td className="text-right">
+                      {(invoice.status === "draft" || invoice.status === "void") && (
+                        <InvoiceRowDelete invoiceId={invoice.id} redirectTo={returnTo} />
+                      )}
                     </Td>
                   </tr>
                 ))}
