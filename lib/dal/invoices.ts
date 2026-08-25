@@ -1115,6 +1115,27 @@ export async function deleteInvoice(id: string): Promise<{ clientId: string }> {
 }
 
 /* ---------------------------------------------------------------------------
+   Void-and-delete — the same two steps as before, in one press.
+
+   deleteInvoice above refuses a live invoice on purpose, and that rule stays:
+   a sent or paid invoice is a record, and the way to retire it is to void it
+   first. What this adds is the shortcut, because "open it, void it, come back,
+   delete it" is four page-loads to remove one row — and clearing a batch of
+   test invoices means doing that four times over.
+
+   So it runs both steps rather than skipping one. setInvoiceStatus applies the
+   same transition table a hand-press would (a draft goes straight to void; a
+   void one is already there and returns early), and deleteInvoice applies the
+   same guard. Both log, so the trail reads exactly as it would have: the void,
+   then the delete, with the number preserved in the delete entry.
+--------------------------------------------------------------------------- */
+
+export async function voidAndDeleteInvoice(id: string): Promise<{ clientId: string }> {
+  await setInvoiceStatus(id, "void");
+  return deleteInvoice(id);
+}
+
+/* ---------------------------------------------------------------------------
    Reconciliation — called from applyPaymentSucceeded (lib/dal/payments.ts).
 
    Kept HERE, and importing nothing from payments.ts, so there is no import

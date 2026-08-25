@@ -109,17 +109,17 @@ export function ClientInvoices({
                   PDF
                 </a>
               )}
-              {/* Removable straight from the list, so clearing out drafts and
-                  voided records doesn't mean opening each one. Same two rules
-                  as the invoice page, enforced in the DAL either way: a draft
-                  isn't a document yet, and a void one is already closed. A
-                  sent or paid invoice has no Delete here at all. */}
-              {(invoice.status === "draft" || invoice.status === "void") && (
-                <InvoiceRowDelete
-                  invoiceId={invoice.id}
-                  redirectTo={`/admin/clients/${clientId}`}
-                />
-              )}
+              {/* Removable straight from the list, whatever its status, so
+                  clearing a run of invoices doesn't mean opening each one. Same
+                  rules as the invoice page and enforced in the DAL either way:
+                  a draft isn't a document yet, a void one is already closed, and
+                  a sent or paid one is voided first — which this control now
+                  does itself instead of sending staff off to do it. */}
+              <InvoiceRowDelete
+                invoiceId={invoice.id}
+                status={invoice.status}
+                redirectTo={`/admin/clients/${clientId}`}
+              />
             </li>
           ))}
         </ul>

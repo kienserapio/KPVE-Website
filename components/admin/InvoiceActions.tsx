@@ -7,6 +7,7 @@ import {
   resyncInvoiceAction,
   setInvoiceDurationAction,
   setInvoiceStatusAction,
+  voidAndDeleteInvoiceAction,
   type InvoiceActionState,
 } from "@/lib/actions/invoices";
 import type { InvoiceStatus } from "@/lib/db/schema";
@@ -25,9 +26,10 @@ import {
    is `no-print`: it must never appear on the page the client files.
 
    Buttons reflect the status because the model does: draft is the only editable
-   state; a sent invoice is void-and-reissue, not edit. Delete shows on a draft
-   and on a void record — never on a live one, where the number has to stay put.
-   The DAL enforces the same rules, so a stale button can't do anything the model
+   state; a sent invoice is void-and-reissue, not edit. Delete shows on every
+   status, but a live one goes through the void first — one press that runs both
+   steps, so the number is retired rather than pulled out of the sequence. The
+   DAL enforces the same rules, so a stale button can't do anything the model
    forbids.
 --------------------------------------------------------------------------- */
 
@@ -167,16 +169,36 @@ export function InvoiceActions({
               onAsk={() => setConfirmingVoid(true)}
               onCancel={() => setConfirmingVoid(false)}
             />
+            <DeleteControl
+              invoiceId={invoiceId}
+              action={voidAndDeleteInvoiceAction}
+              label="Delete"
+              confirmLabel="Void and delete"
+              confirming={confirmingDelete}
+              onAsk={() => setConfirmingDelete(true)}
+              onCancel={() => setConfirmingDelete(false)}
+            />
           </>
         )}
 
         {status === "paid" && (
-          <VoidControl
-            invoiceId={invoiceId}
-            confirming={confirmingVoid}
-            onAsk={() => setConfirmingVoid(true)}
-            onCancel={() => setConfirmingVoid(false)}
-          />
+          <>
+            <VoidControl
+              invoiceId={invoiceId}
+              confirming={confirmingVoid}
+              onAsk={() => setConfirmingVoid(true)}
+              onCancel={() => setConfirmingVoid(false)}
+            />
+            <DeleteControl
+              invoiceId={invoiceId}
+              action={voidAndDeleteInvoiceAction}
+              label="Delete"
+              confirmLabel="Void and delete"
+              confirming={confirmingDelete}
+              onAsk={() => setConfirmingDelete(true)}
+              onCancel={() => setConfirmingDelete(false)}
+            />
+          </>
         )}
 
         {/* A void invoice is already closed: the client can't see it and it
@@ -390,6 +412,8 @@ function VoidControl({
 function DeleteControl({
   invoiceId,
   label,
+  confirmLabel = "Delete permanently",
+  action = deleteInvoiceAction,
   confirming,
   onAsk,
   onCancel,
@@ -397,6 +421,14 @@ function DeleteControl({
 }: {
   invoiceId: string;
   label: string;
+  /** The second press, which names the act rather than saying "Confirm". */
+  confirmLabel?: string;
+  /**
+   * Which removal runs. A draft or void record is deleted outright; a live one
+   * is handed to the action that voids it first, because a number that just
+   * disappears from the sequence is the thing an auditor asks about.
+   */
+  action?: (formData: FormData) => Promise<void>;
   confirming: boolean;
   onAsk: () => void;
   onCancel: () => void;
@@ -411,11 +443,11 @@ function DeleteControl({
     );
   }
   return (
-    <form action={deleteInvoiceAction} className="inline-flex items-center gap-2">
+    <form action={action} className="inline-flex items-center gap-2">
       <input type="hidden" name="invoiceId" value={invoiceId} />
       {redirectTo && <input type="hidden" name="redirectTo" value={redirectTo} />}
       <AdminButton type="submit" variant="danger">
-        Delete permanently
+        {confirmLabel}
       </AdminButton>
       <button
         type="button"

@@ -193,16 +193,19 @@ export default async function InvoicesPage({
                     <Td>
                       <InvoiceStatusBadge status={invoice.status} />
                     </Td>
-                    {/* Prunable straight from the list, so clearing out drafts
-                        and voided records doesn't mean opening each one. Same
-                        two rules as everywhere else, and the DAL enforces them
-                        either way: a draft isn't a document yet, and a void one
-                        is already a closed record. Sent and paid have no Delete
-                        here at all — they are voided first, on their own page. */}
+                    {/* Prunable straight from the list, whatever its status, so
+                        clearing a run of invoices doesn't mean opening each one.
+                        The rules haven't moved and the DAL enforces them either
+                        way — a draft isn't a document yet, a void one is already
+                        a closed record, and a sent or paid one is voided before
+                        it goes. The control just does that void itself now,
+                        rather than sending staff to the invoice page for it. */}
                     <Td className="text-right">
-                      {(invoice.status === "draft" || invoice.status === "void") && (
-                        <InvoiceRowDelete invoiceId={invoice.id} redirectTo={returnTo} />
-                      )}
+                      <InvoiceRowDelete
+                        invoiceId={invoice.id}
+                        status={invoice.status}
+                        redirectTo={returnTo}
+                      />
                     </Td>
                   </tr>
                 ))}

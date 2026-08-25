@@ -12,6 +12,7 @@ import {
   setInvoiceDuration,
   setInvoiceStatus,
   updateInvoice,
+  voidAndDeleteInvoice,
 } from "@/lib/dal/invoices";
 import {
   billTermSchema,
@@ -299,6 +300,28 @@ export async function resyncInvoiceAction(formData: FormData): Promise<void> {
    where they were working. Only same-site paths are honoured, so a crafted
    form can't turn a delete into an open redirect. */
 export async function deleteInvoiceAction(formData: FormData): Promise<void> {
+  return removeInvoice(formData, deleteInvoice, "deleteInvoiceAction");
+}
+
+/* Void and delete — for a sent or paid invoice, which deleteInvoiceAction
+   refuses outright.
+
+   The rule it enforces hasn't moved: a live invoice is still voided before it
+   is removed. This just stops making staff walk the two steps by hand across
+   four page-loads, which is what pruning a run of test invoices actually costs.
+   The DAL runs both, and logs both, so the audit trail is the one the manual
+   route would have left. */
+export async function voidAndDeleteInvoiceAction(formData: FormData): Promise<void> {
+  return removeInvoice(formData, voidAndDeleteInvoice, "voidAndDeleteInvoiceAction");
+}
+
+/* The half both share: read the id, sanitise the return path, run the removal,
+   then revalidate the two lists an invoice appears on before landing. */
+async function removeInvoice(
+  formData: FormData,
+  remove: (id: string) => Promise<{ clientId: string }>,
+  label: string,
+): Promise<void> {
   const invoiceId = String(formData.get("invoiceId") ?? "");
   if (!invoiceId) return;
 
@@ -308,9 +331,9 @@ export async function deleteInvoiceAction(formData: FormData): Promise<void> {
   let clientId: string;
   try {
     await requireSession();
-    ({ clientId } = await deleteInvoice(invoiceId));
+    ({ clientId } = await remove(invoiceId));
   } catch (error) {
-    console.error("[deleteInvoiceAction]", error);
+    console.error(`[${label}]`, error);
     redirect(returnTo ?? `/admin/invoices/${invoiceId}`);
   }
 
