@@ -36,6 +36,7 @@ const ACTION_LABELS: Record<string, string> = {
   "settings.updated": "Business settings updated",
   "invoice.created": "Invoice drafted",
   "invoice.sent": "Invoice sent",
+  "invoice.emailed": "Invoice emailed to client",
   "invoice.paid": "Invoice paid",
   "invoice.void": "Invoice voided",
   "invoice.deleted": "Draft invoice deleted",

@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { requireSession } from "@/lib/dal/session";
+import { logActivity } from "@/lib/dal/activity";
+import { sendMail } from "@/lib/email";
+import { invoiceEmail } from "@/lib/email/templates";
+import { appUrl, formatDate } from "@/lib/utils";
 import {
   createInvoiceFromServices,
   deleteInvoice,
@@ -17,6 +21,7 @@ import {
 import {
   billTermSchema,
   createInvoiceSchema,
+  invoiceIdSchema,
   setInvoiceDurationSchema,
   setInvoiceStatusSchema,
   updateInvoiceSchema,
@@ -340,4 +345,128 @@ async function removeInvoice(
   revalidatePath("/admin/invoices");
   revalidatePath(`/admin/clients/${clientId}`);
   redirect(returnTo ?? "/admin/invoices");
+}
+
+/* ---------------------------------------------------------------------------
+   Email it — the invoice, sent by the app rather than by the staff member.
+
+   This used to be a mailto: link: it opened whatever mail client the machine
+   had, pre-filled a plain-text note and left a human to press Send. That made
+   the invoice look like whatever that client's default font is, arrived from a
+   personal mailbox, and could not be sent at all from a machine with no mail
+   client configured. Now the server composes the document — lines, totals, GST
+   and both ways to pay — and sends it over SMTP.
+
+   Same contract as the portal code email: this never throws and never rolls
+   anything back. Nothing about the invoice changes here; the mail either left
+   or it didn't, and the UI says which. When SMTP isn't configured the answer is
+   `not_configured`, which is a different sentence from "it failed" and the bar
+   offers the old mailto: hand-off in its place.
+--------------------------------------------------------------------------- */
+
+export type InvoiceEmailState = {
+  ok: boolean;
+  error: string | null;
+  /** Present once a send has been attempted. */
+  delivery?: {
+    sent: boolean;
+    to: string;
+    /** Only when `sent` is false. */
+    reason?: "not_configured" | "failed";
+  };
+};
+
+export async function emailInvoiceAction(
+  _prev: InvoiceEmailState,
+  formData: FormData,
+): Promise<InvoiceEmailState> {
+  const parsed = invoiceIdSchema.safeParse({ invoiceId: formData.get("invoiceId") });
+
+  if (!parsed.success) return fail("That invoice couldn't be found.");
+
+  try {
+    await requireSession();
+    const invoice = await getInvoice(parsed.data.invoiceId);
+
+    if (!invoice) return fail("That invoice no longer exists.");
+
+    // A draft has no live client link — getInvoiceByToken refuses one — so
+    // emailing it would send a URL that 404s. Send it first, then email it.
+    if (invoice.status === "draft") {
+      return fail("Send the invoice first — a draft has no client link yet.");
+    }
+    if (invoice.status === "void") {
+      return fail("A voided invoice can't be emailed. Raise a new one instead.");
+    }
+    if (!invoice.billToEmail) {
+      return fail("No billing email on this invoice. Add one to the client first.");
+    }
+
+    const { subject, text, html } = invoiceEmail({
+      clientName: invoice.billToName,
+      number: invoice.number,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      currency: invoice.currency,
+      subtotalCents: invoice.subtotalCents,
+      taxCents: invoice.taxCents,
+      totalCents: invoice.totalCents,
+      amountPaidCents: invoice.amountPaidCents,
+      taxRateBps: invoice.taxRateBps,
+      taxMode: invoice.taxMode,
+      poNumber: invoice.poNumber,
+      lines: invoice.lines.map((line) => ({
+        label: line.label,
+        period: periodLabel(line.periodStart, line.periodEnd),
+        amountCents: line.amountCents,
+      })),
+      payUrl: `${appUrl()}/invoice/${invoice.publicToken}`,
+      payable: invoice.payable,
+      bankDetails: {
+        bankName: invoice.bankDetails.bankName,
+        bsb: invoice.bankDetails.bsb,
+        accountName: invoice.bankDetails.accountName,
+        accountNumber: invoice.bankDetails.accountNumber,
+      },
+    });
+
+    const result = await sendMail({
+      to: invoice.billToEmail,
+      subject,
+      text,
+      html,
+      // Replies go to the business, not to the outgoing mailbox — "if anything
+      // looks wrong, reply to this email" is only true if someone reads it.
+      replyTo: invoice.sellerEmail ?? undefined,
+    });
+
+    if (!result.sent) {
+      return {
+        ok: false,
+        error: null,
+        delivery: { sent: false, to: invoice.billToEmail, reason: result.reason },
+      };
+    }
+
+    await logActivity({
+      actorType: "staff",
+      entityType: "invoice",
+      entityId: invoice.id,
+      action: "invoice.emailed",
+      metadata: { number: invoice.number, to: invoice.billToEmail },
+    });
+
+    return { ok: true, error: null, delivery: { sent: true, to: invoice.billToEmail } };
+  } catch (error) {
+    console.error("[emailInvoiceAction]", error);
+    return fail(mapError(error));
+  }
+}
+
+/** Same rule the document and the PDF use — see InvoiceDocument. */
+function periodLabel(start: Date | null, end: Date | null): string | null {
+  if (start && end) return `${formatDate(start)} – ${formatDate(end)}`;
+  if (start) return formatDate(start);
+  if (end) return formatDate(end);
+  return null;
 }

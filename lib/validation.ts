@@ -674,6 +674,11 @@ export const updateInvoiceSchema = z.object({
   dueDate: optionalDate,
 });
 
+/** Just the id — for the actions that act on an invoice without changing it. */
+export const invoiceIdSchema = z.object({
+  invoiceId: z.string().uuid(),
+});
+
 export const setInvoiceStatusSchema = z.object({
   invoiceId: z.string().uuid(),
   status: invoiceStatusSchema,

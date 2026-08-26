@@ -4,15 +4,17 @@
  *   npm run mail:verify
  *   npm run mail:verify -- --send someone@example.com
  *   npm run mail:verify -- --html preview.html
+ *   npm run mail:verify -- --template invoice --html preview.html
  *
  * Without --send it connects and authenticates, then hangs up; nothing leaves.
  * Both the SSL port and the STARTTLS port are tried, because a host that blocks
  * outbound 465 (some office networks do) will still take 587, and knowing which
  * one works here is the difference between a config change and a mystery.
  *
- * With --send it delivers a REAL portal access email — the same template a
- * client receives, with an obviously fake code — so the thing being checked is
- * how it renders in a mail client, not merely whether the socket opened.
+ * With --send it delivers a REAL email — the same template a client receives,
+ * built from obviously fake data — so the thing being checked is how it renders
+ * in a mail client, not merely whether the socket opened. --template picks
+ * which one: `access` (the default) or `invoice`.
  *
  * With --html it writes that same HTML to a file instead, which is how you
  * iterate on a template without putting another message through a real inbox.
@@ -28,7 +30,8 @@ import { writeFileSync } from "node:fs";
 
 import nodemailer from "nodemailer";
 
-import { portalAccessEmail } from "@/lib/email/templates";
+import { invoiceEmail, portalAccessEmail } from "@/lib/email/templates";
+import { appUrl } from "@/lib/utils";
 
 const host = process.env.SMTP_HOST;
 const user = process.env.SMTP_USER;
@@ -63,11 +66,57 @@ async function attempt(port: number, secure: boolean): Promise<boolean> {
   }
 }
 
+/** Which template the run is exercising — `access` unless asked otherwise. */
+function which(): string {
+  const flag = process.argv.indexOf("--template");
+  return flag === -1 ? "access" : process.argv[flag + 1];
+}
+
 /**
  * A sample of the real thing. The code is not a real credential and cannot be —
  * it was never minted, so no row holds its hash and it will not sign anyone in.
+ * The invoice sample's token is likewise fake: /invoice/<token> will 404 on it.
  */
 function sample(to: string) {
+  if (which() === "invoice") {
+    const day = 24 * 60 * 60 * 1000;
+    return invoiceEmail({
+      clientName: "Sample Recipient",
+      number: "INV-0000",
+      status: "sent",
+      dueDate: new Date(Date.now() + 14 * day),
+      currency: "AUD",
+      subtotalCents: 132000,
+      taxCents: 13200,
+      totalCents: 145200,
+      amountPaidCents: 0,
+      taxRateBps: 1000,
+      taxMode: "exclusive",
+      poNumber: "PO-4471",
+      lines: [
+        {
+          label: "Managed hosting",
+          period: "1 March 2026 – 28 February 2027",
+          amountCents: 108000,
+        },
+        { label: "Domain renewal — example.com.au", period: null, amountCents: 24000 },
+      ],
+      payUrl: `${appUrl()}/invoice/${"0".repeat(32)}`,
+      payable: true,
+      bankDetails: {
+        bankName: "Sample Bank",
+        accountName: "KPVE Pty Ltd",
+        bsb: "000-000",
+        accountNumber: "0000 0000",
+      },
+    });
+  }
+
+  if (which() !== "access") {
+    console.error(`\n--template takes "access" or "invoice", not "${which()}".\n`);
+    process.exit(1);
+  }
+
   return portalAccessEmail({
     name: "Sample Recipient",
     email: to,
@@ -96,7 +145,13 @@ async function sendSample(to: string, port: number, secure: boolean) {
       html,
     });
     console.log(`\n  Sent to ${to} — ${info.messageId}`);
-    console.log("  The code in it is a sample and will not sign anyone in.\n");
+    // Both samples carry a credential-shaped thing that is not one, and saying
+    // which keeps a test send from being read as a real one.
+    console.log(
+      which() === "invoice"
+        ? "  The invoice in it is a sample; its link points at a token that does not exist.\n"
+        : "  The code in it is a sample and will not sign anyone in.\n",
+    );
   } finally {
     transport.close();
   }

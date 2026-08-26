@@ -1,3 +1,4 @@
+import { formatMoney, formatTaxRate } from "@/lib/billing";
 import { appUrl } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
@@ -566,3 +567,292 @@ const FAILURE_REASONS: Record<string, string> = {
   processing_error: "The card network had a problem processing it.",
   card_not_supported: "That card doesn't support this kind of payment.",
 };
+
+/* ---------------------------------------------------------------------------
+   The invoice, in the inbox.
+
+   Sent by a staff member pressing "Email it" on the invoice — the same act that
+   used to hand them a mailto: draft to finish by hand. What arrives now is the
+   document, not a note about it: the lines, the totals, the GST position and
+   both ways to pay, so a client who never opens the link still knows what they
+   owe and by when.
+
+   It is a summary, not a replacement for the invoice. The tax invoice is the
+   page and the PDF behind the button — this is the covering letter, and it says
+   so by making the button the loudest thing in it.
+--------------------------------------------------------------------------- */
+
+export type InvoiceEmailLine = {
+  label: string;
+  /** "1 Mar 2026 – 28 Feb 2027", or null on a line that covers no period. */
+  period: string | null;
+  amountCents: number;
+};
+
+export function invoiceEmail(input: {
+  clientName: string;
+  number: string;
+  /** A void invoice is never emailed, and a draft has no live link to email. */
+  status: "sent" | "paid";
+  dueDate: Date | null;
+  currency: string;
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  amountPaidCents: number;
+  taxRateBps: number;
+  taxMode: "none" | "inclusive" | "exclusive";
+  poNumber: string | null;
+  lines: InvoiceEmailLine[];
+  /** The client's own copy — the token IS the credential, so never a login. */
+  payUrl: string;
+  /** Whether card checkout is offered on that page, which decides the CTA. */
+  payable: boolean;
+  bankDetails: {
+    bankName: string | null;
+    bsb: string | null;
+    accountName: string | null;
+    accountNumber: string | null;
+  };
+}): Email {
+  const money = (cents: number) => formatMoney(cents, input.currency);
+
+  const balanceCents = Math.max(0, input.totalCents - input.amountPaidCents);
+  const settled = input.status === "paid" || balanceCents === 0;
+  const partPaid = !settled && input.amountPaidCents > 0;
+  const due = input.dueDate ? formatDay(input.dueDate) : null;
+  // Compared as days, not instants: an invoice due today is due today until
+  // midnight, and telling someone they are late on the morning of is wrong.
+  const overdue = Boolean(
+    !settled && input.dueDate && startOfDay(input.dueDate) < startOfDay(new Date()),
+  );
+
+  /* The totals, exactly as InvoiceDocument states them — which rows appear is a
+     function of the tax mode snapshotted at issue, and nothing else. */
+  const totals: Array<{ label: string; value: string; strong?: boolean }> =
+    input.taxMode === "none"
+      ? [{ label: "Total", value: money(input.totalCents), strong: true }]
+      : input.taxMode === "inclusive"
+        ? [
+            { label: "Subtotal", value: money(input.subtotalCents) },
+            {
+              label: `Includes GST (${formatTaxRate(input.taxRateBps)})`,
+              value: money(input.taxCents),
+            },
+            {
+              label: "Total (GST inclusive)",
+              value: money(input.totalCents),
+              strong: true,
+            },
+          ]
+        : [
+            { label: "Subtotal", value: money(input.subtotalCents) },
+            {
+              label: `GST (${formatTaxRate(input.taxRateBps)})`,
+              value: money(input.taxCents),
+            },
+            { label: "Total", value: money(input.totalCents), strong: true },
+          ];
+
+  if (input.amountPaidCents > 0) {
+    totals.push({ label: "Amount paid", value: `− ${money(input.amountPaidCents)}` });
+    totals.push({
+      label: settled ? "Balance" : "Balance due",
+      value: money(balanceCents),
+      strong: true,
+    });
+  }
+
+  const bank = [
+    ["Bank", input.bankDetails.bankName],
+    ["Account name", input.bankDetails.accountName],
+    ["BSB", input.bankDetails.bsb],
+    ["Account number", input.bankDetails.accountNumber],
+  ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+  const headline = settled
+    ? `Invoice ${input.number} — paid`
+    : overdue
+      ? `Invoice ${input.number} — ${money(balanceCents)}, overdue`
+      : `Invoice ${input.number} from KPVE — ${money(balanceCents)}${due ? `, due ${due}` : ""}`;
+
+  /* ---- The amount line, said the same way in both parts. ---- */
+  const amountLabel = settled
+    ? "Paid in full"
+    : partPaid
+      ? "Balance still owing"
+      : "Amount due";
+
+  // What the big number is. On a settled invoice the balance is zero, and a
+  // receipt whose headline figure is "$0" tells the reader nothing about what
+  // they paid — so the total takes the slot once there is nothing owing.
+  const heroCents = settled ? input.totalCents : balanceCents;
+
+  const timing = settled
+    ? "Nothing further to do — this copy is for your records."
+    : overdue && due
+      ? `This was due on ${due}.`
+      : due
+        ? `Due ${due}.`
+        : "Payable on receipt.";
+
+  /* ------------------------------------------------------------------ text */
+
+  const text = [
+    `Hi ${input.clientName},`,
+    "",
+    settled
+      ? `Here's invoice ${input.number}, paid in full. Nothing further to do — this copy is for your records.`
+      : `Here's invoice ${input.number} for ${money(balanceCents)}. ${timing}`,
+    "",
+    `${amountLabel.toUpperCase()}: ${money(heroCents)}`,
+    ...(input.poNumber ? [`PO number: ${input.poNumber}`] : []),
+    "",
+    "WHAT'S ON IT",
+    ...input.lines.map((line) =>
+      [
+        `  ${line.label}${line.period ? ` (${line.period})` : ""}`,
+        `    ${money(line.amountCents)}`,
+      ].join("\n"),
+    ),
+    "",
+    ...totals.map((row) => `  ${row.label}: ${row.value}`),
+    "",
+    settled ? "YOUR COPY" : "TO PAY IT",
+    `  ${input.payUrl}`,
+    ...(settled
+      ? ["  View it or download the PDF for your records."]
+      : input.payable
+        ? [
+            "  Open it and press Pay now for a secure card checkout. If you've",
+            "  already part-paid it, you're only charged the balance.",
+          ]
+        : ["  View it or download the PDF."]),
+    ...(bank.length && !settled
+      ? [
+          "",
+          "OR BY BANK TRANSFER",
+          ...bank.map(([label, value]) => `  ${label}: ${value}`),
+          `  Reference: ${input.number}`,
+        ]
+      : []),
+    "",
+    "If anything on it looks wrong, reply to this email and we'll sort it out.",
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  /* ------------------------------------------------------------------ html */
+
+  const html = shell(
+    settled
+      ? `Invoice ${input.number} — paid in full.`
+      : `${money(balanceCents)}${due ? `, due ${due}` : ""}.`,
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;line-height:1.25;font-weight:700;color:${WHITE};">
+       ${settled ? "Your invoice, paid" : `Invoice ${escapeHtml(input.number)}`}
+     </h1>
+
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(input.clientName)},</p>
+
+     <!-- The number the reader is here for, on its own surface. -->
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border:1px solid ${LINE_3};border-radius:11px;margin:0 0 24px;">
+       <tr><td style="padding:20px 22px;">
+         <p style="margin:0 0 6px;font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${MUTED};">${escapeHtml(amountLabel)} &middot; Invoice ${escapeHtml(input.number)}</p>
+         <p style="margin:0 0 4px;font-family:${MONO};font-size:28px;font-weight:700;color:${GOLD_CREAM};">${escapeHtml(money(heroCents))}</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${overdue ? GOLD_BRIGHT : MUTED_3};">${escapeHtml(timing)}</p>
+         ${
+           partPaid
+             ? `<p style="margin:8px 0 0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">${escapeHtml(`${money(input.amountPaidCents)} of ${money(input.totalCents)} already paid.`)}</p>`
+             : ""
+         }
+         ${
+           input.poNumber
+             ? `<p style="margin:8px 0 0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">PO number ${escapeHtml(input.poNumber)}</p>`
+             : ""
+         }
+       </td></tr>
+     </table>
+
+     ${button(input.payUrl, settled ? "View or download the invoice" : input.payable ? "View and pay the invoice" : "View the invoice")}
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0 0 14px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">What's on it</p>
+
+     <!-- The lines. Two columns, right-aligned money, because a column of
+          amounts that does not line up reads as a mistake in the amounts. -->
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 6px;">
+       ${input.lines
+         .map(
+           (line) => `<tr>
+         <td valign="top" style="padding:0 12px 12px 0;font-family:${SANS};font-size:14px;line-height:1.5;color:${WHITE};">
+           ${escapeHtml(line.label)}
+           ${
+             line.period
+               ? `<span style="display:block;font-size:12px;line-height:1.5;color:${MUTED};">${escapeHtml(line.period)}</span>`
+               : ""
+           }
+         </td>
+         <td valign="top" align="right" nowrap="nowrap" style="padding:0 0 12px;font-family:${MONO};font-size:14px;line-height:1.5;color:${MUTED_3};white-space:nowrap;">${escapeHtml(money(line.amountCents))}</td>
+       </tr>`,
+         )
+         .join("")}
+       <tr><td colspan="2" height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+       ${totals
+         .map(
+           (row, i) => `<tr>
+         <td align="right" style="padding:${i === 0 ? "12px" : "0"} 12px 8px 0;font-family:${SANS};font-size:${row.strong ? "14px" : "13px"};font-weight:${row.strong ? "700" : "400"};color:${row.strong ? WHITE : MUTED};">${escapeHtml(row.label)}</td>
+         <td align="right" nowrap="nowrap" style="padding:${i === 0 ? "12px" : "0"} 0 8px;font-family:${MONO};font-size:${row.strong ? "15px" : "13px"};font-weight:${row.strong ? "700" : "400"};color:${row.strong ? GOLD_CREAM : MUTED};white-space:nowrap;">${escapeHtml(row.value)}</td>
+       </tr>`,
+         )
+         .join("")}
+     </table>
+
+     ${
+       settled
+         ? ""
+         : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border-left:2px solid ${GOLD};border-radius:0 8px 8px 0;margin:20px 0 0;">
+       <tr><td style="padding:16px 18px;">
+         <p style="margin:0 0 4px;font-family:${SANS};font-size:14px;font-weight:700;color:${WHITE};">How to pay</p>
+         <p style="margin:0${bank.length ? " 0 12px" : ""};font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">
+           ${
+             input.payable
+               ? `<a href="${input.payUrl}" style="color:${GOLD_BRIGHT};text-decoration:underline;">Open the invoice</a> and press <strong style="color:${WHITE};font-weight:600;">Pay now</strong> for a secure card checkout${partPaid ? " — you're only charged the balance" : ""}.`
+               : `<a href="${input.payUrl}" style="color:${GOLD_BRIGHT};text-decoration:underline;">Open the invoice</a> for the full details and a PDF for your records.`
+           }
+         </p>
+         ${
+           bank.length
+             ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0">
+           ${[...bank, ["Reference", input.number] as [string, string]]
+             .map(
+               ([label, value]) => `<tr>
+             <td valign="top" style="padding:0 14px 4px 0;font-family:${SANS};font-size:13px;line-height:1.5;color:${MUTED};">${escapeHtml(label)}</td>
+             <td valign="top" style="padding:0 0 4px;font-family:${MONO};font-size:13px;line-height:1.5;color:${MUTED_3};">${escapeHtml(value)}</td>
+           </tr>`,
+             )
+             .join("")}
+         </table>`
+             : ""
+         }
+       </td></tr>
+     </table>`
+     }
+
+     <p style="margin:24px 0 0;font-family:${SANS};font-size:13px;line-height:1.55;color:${MUTED};">
+       If anything on it looks wrong, reply to this email and we'll sort it out.
+     </p>`,
+  );
+
+  return { subject: headline, text, html };
+}
+
+/** Midnight local — see the `overdue` comparison above. */
+function startOfDay(date: Date): Date {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
