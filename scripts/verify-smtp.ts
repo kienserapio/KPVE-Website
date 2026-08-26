@@ -93,13 +93,22 @@ function sample(to: string) {
       taxRateBps: 1000,
       taxMode: "exclusive",
       poNumber: "PO-4471",
+      notes: "Thanks for your business — anything on this invoice can be queried by reply.",
       lines: [
         {
           label: "Managed hosting",
           period: "1 March 2026 – 28 February 2027",
+          description: "Includes daily backups and the staging site.",
+          items: ["example.com.au", "staging.example.com.au"],
           amountCents: 108000,
         },
-        { label: "Domain renewal — example.com.au", period: null, amountCents: 24000 },
+        {
+          label: "Domain renewal — example.com.au",
+          period: null,
+          description: "Renewed for two years at the locked-in rate.",
+          items: [],
+          amountCents: 24000,
+        },
       ],
       payUrl: `${appUrl()}/invoice/${"0".repeat(32)}`,
       payable: true,

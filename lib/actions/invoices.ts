@@ -408,9 +408,16 @@ async function composeInvoiceEmail(
     taxRateBps: invoice.taxRateBps,
     taxMode: invoice.taxMode,
     poNumber: invoice.poNumber,
+    notes: invoice.notes,
     lines: invoice.lines.map((line) => ({
       label: line.label,
       period: periodLabel(line.periodStart, line.periodEnd),
+      // The note staff wrote on the billing line, snapshotted at issue.
+      description: line.description,
+      // Same split the document does — newline-separated, blanks dropped.
+      items: line.details
+        ? line.details.split("\n").filter((item) => item.trim())
+        : [],
       amountCents: line.amountCents,
     })),
     payUrl: `${appUrl()}/invoice/${invoice.publicToken}`,

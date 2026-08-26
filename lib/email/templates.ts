@@ -74,6 +74,15 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Escaped, with newlines kept. A staff-written note is typed into a textarea
+ * and its line breaks are part of what was meant, but HTML eats them — so they
+ * become <br> after the escaping, never before.
+ */
+function escapeLines(value: string): string {
+  return escapeHtml(value).replace(/\r?\n/g, "<br>");
+}
+
 /** The page the whole email sits in: dark ground, one centred card. */
 function shell(preheader: string, body: string): string {
   return `<!doctype html>
@@ -586,6 +595,16 @@ export type InvoiceEmailLine = {
   label: string;
   /** "1 Mar 2026 – 28 Feb 2027", or null on a line that covers no period. */
   period: string | null;
+  /**
+   * The note staff wrote on the billing line, snapshotted onto the invoice when
+   * it was raised — "renewed for two years at the locked-in rate", say. It is
+   * on the document and on the PDF, so it belongs here too: an email that
+   * silently drops the one line explaining the charge is the email that gets
+   * replied to with "what is this?".
+   */
+  description: string | null;
+  /** What the line provisions — the actual domains, addresses, sites. */
+  items: string[];
   amountCents: number;
 };
 
@@ -603,6 +622,8 @@ export function invoiceEmail(input: {
   taxRateBps: number;
   taxMode: "none" | "inclusive" | "exclusive";
   poNumber: string | null;
+  /** The invoice's own Notes section, as shown at the foot of the document. */
+  notes: string | null;
   lines: InvoiceEmailLine[];
   /** The client's own copy — the token IS the credential, so never a login. */
   payUrl: string;
@@ -713,10 +734,18 @@ export function invoiceEmail(input: {
       [
         `  ${line.label}${line.period ? ` (${line.period})` : ""}`,
         `    ${money(line.amountCents)}`,
+        // The note, indented under the thing it explains.
+        ...(line.description
+          ? line.description.split(/\r?\n/).map((row) => `    ${row}`)
+          : []),
+        ...line.items.map((item) => `    - ${item}`),
       ].join("\n"),
     ),
     "",
     ...totals.map((row) => `  ${row.label}: ${row.value}`),
+    ...(input.notes
+      ? ["", "NOTES", ...input.notes.split(/\r?\n/).map((row) => `  ${row}`)]
+      : []),
     "",
     settled ? "YOUR COPY" : "TO PAY IT",
     `  ${input.payUrl}`,
@@ -795,6 +824,18 @@ export function invoiceEmail(input: {
                ? `<span style="display:block;font-size:12px;line-height:1.5;color:${MUTED};">${escapeHtml(line.period)}</span>`
                : ""
            }
+           ${
+             line.description
+               ? `<span style="display:block;margin-top:4px;font-size:12px;line-height:1.5;color:${MUTED_3};">${escapeLines(line.description)}</span>`
+               : ""
+           }
+           ${
+             line.items.length
+               ? `<span style="display:block;margin-top:4px;font-size:12px;line-height:1.6;color:${MUTED};">${line.items
+                   .map((item) => `&bull;&nbsp;${escapeHtml(item)}`)
+                   .join("<br>")}</span>`
+               : ""
+           }
          </td>
          <td valign="top" align="right" nowrap="nowrap" style="padding:0 0 12px;font-family:${MONO};font-size:14px;line-height:1.5;color:${MUTED_3};white-space:nowrap;">${escapeHtml(money(line.amountCents))}</td>
        </tr>`,
@@ -810,6 +851,18 @@ export function invoiceEmail(input: {
          )
          .join("")}
      </table>
+
+     ${
+       input.notes
+         ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0 0;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+       <tr><td style="padding:16px 0 0;">
+         <p style="margin:0 0 6px;font-family:${SANS};font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${GOLD};">Notes</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${MUTED_3};">${escapeLines(input.notes)}</p>
+       </td></tr>
+     </table>`
+         : ""
+     }
 
      ${
        settled
