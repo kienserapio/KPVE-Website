@@ -856,3 +856,113 @@ function startOfDay(date: Date): Date {
   copy.setHours(0, 0, 0, 0);
   return copy;
 }
+
+/* ---------------------------------------------------------------------------
+   A payment link, for one billing line.
+
+   Not an invoice and careful not to look like one: there is no number, no GST
+   position and no totals block, because none of those have been struck. It is
+   an invitation to set up a payment, so the one thing it has to get right is
+   what the client is agreeing to — the amount, and how often it recurs.
+
+   That "how often" is why the rate is spelled out in words as well as figures.
+   "$44/yr" is the site's compact form and it is fine on a page the reader is
+   already looking at; in an inbox, next to a button that starts a subscription,
+   it is worth a whole sentence.
+--------------------------------------------------------------------------- */
+
+export function paymentLinkEmail(input: {
+  clientName: string;
+  /** The billing line's own label — "Hosting — example.com.au". */
+  label: string;
+  /** The compact rate, from formatRate: "$44/yr", "$120 every 2 years". */
+  rate: string;
+  /** Said in words, because a recurring charge should never be a surprise. */
+  recurrence: string;
+  url: string;
+  /** A test link. Says so, loudly — never let one read as a real request. */
+  simulated: boolean;
+}): Email {
+  const first = input.clientName.split(" ")[0] || "there";
+
+  const subject = input.simulated
+    ? `[test] Payment link for ${input.label}`
+    // A comma, not a dash: labels carry their own em-dash ("Hosting — a.com")
+    // and two in one subject line reads as a typo.
+    : `Set up payment for ${input.label}, ${input.rate}`;
+
+  const text = [
+    `Hi ${first},`,
+    "",
+    ...(input.simulated
+      ? [
+          "*** THIS IS A TEST LINK. No card will be charged and nothing is owed. ***",
+          "",
+        ]
+      : []),
+    `Here's the payment link for ${input.label}.`,
+    "",
+    "WHAT YOU'RE SETTING UP",
+    `  ${input.label}`,
+    `  ${input.rate} — ${input.recurrence}`,
+    "",
+    "TO SET IT UP",
+    `  ${input.url}`,
+    "  It opens a secure checkout. Your card details go straight to our payment",
+    "  provider — we never see or store them.",
+    "",
+    "The link doesn't expire, so there's no rush. If anything above looks wrong,",
+    "reply to this email before you use it and we'll sort it out.",
+    "",
+    "KPVE",
+    appUrl(),
+  ].join("\n");
+
+  const html = shell(
+    input.simulated
+      ? `Test link for ${input.label} — nothing will be charged.`
+      : `${input.rate} — ${input.recurrence}.`,
+    `<h1 style="margin:0 0 14px;font-family:${SANS};font-size:23px;line-height:1.25;font-weight:700;color:${WHITE};">
+       ${input.simulated ? "Test payment link" : "Your payment link"}
+     </h1>
+
+     <p style="margin:0 0 18px;font-family:${SANS};font-size:15px;line-height:1.6;color:${MUTED_3};">Hi ${escapeHtml(first)},</p>
+
+     ${
+       input.simulated
+         ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;border-left:3px solid ${GOLD};">
+       <tr><td style="padding:2px 0 2px 16px;">
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${GOLD_BRIGHT};font-weight:700;">This is a test link. No card will be charged, and nothing is owed.</p>
+       </td></tr>
+     </table>`
+         : ""
+     }
+
+     <!-- What is being agreed to, on its own surface. The recurrence sits with
+          the amount because the two are one fact, not two. -->
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${SURFACE_2}" style="background:${SURFACE_2};border:1px solid ${LINE_3};border-radius:11px;margin:0 0 24px;">
+       <tr><td style="padding:20px 22px;">
+         <p style="margin:0 0 6px;font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:${MUTED};">What you're setting up</p>
+         <p style="margin:0 0 10px;font-family:${SANS};font-size:16px;font-weight:700;color:${WHITE};">${escapeHtml(input.label)}</p>
+         <p style="margin:0 0 3px;font-family:${MONO};font-size:22px;font-weight:700;color:${GOLD_CREAM};">${escapeHtml(input.rate)}</p>
+         <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">${escapeHtml(input.recurrence)}</p>
+       </td></tr>
+     </table>
+
+     ${button(input.url, input.simulated ? "Open the test checkout" : "Set up payment")}
+
+     <p style="margin:0 0 24px;font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};">
+       It opens a secure checkout. Your card details go straight to our payment provider — we never see or store them.
+     </p>
+
+     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+       <tr><td height="1" bgcolor="${LINE}" style="height:1px;line-height:1px;font-size:0;background:${LINE};">&nbsp;</td></tr>
+     </table>
+
+     <p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED};">
+       The link doesn't expire, so there's no rush. If anything above looks wrong, reply to this email before you use it and we'll sort it out.
+     </p>`,
+  );
+
+  return { subject, text, html };
+}

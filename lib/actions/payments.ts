@@ -9,8 +9,15 @@ import {
   clearCheckout,
   createCheckout,
   createInvoiceCheckout,
+  getPaymentLinkRecipient,
   simulatePayment,
 } from "@/lib/dal/payments";
+import { logActivity } from "@/lib/dal/activity";
+import { sendMail } from "@/lib/email";
+import { paymentLinkEmail } from "@/lib/email/templates";
+import type { EmailFlowState } from "@/lib/email/flow";
+import { formatRate, formatTerm, INTERVAL_NOUN } from "@/lib/billing";
+import type { BillingInterval } from "@/lib/db/schema";
 import { getInvoiceByToken } from "@/lib/dal/invoices";
 import { clientServiceIdSchema, payInvoiceSchema } from "@/lib/validation";
 import { getClientIp, rateLimit } from "@/lib/rate-limit";
@@ -183,5 +190,125 @@ export async function simulatePaymentAction(
   } catch (error) {
     console.error("[simulatePaymentAction]", error);
     return fail(mapError(error));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Emailing a payment link — preview, then send.
+
+   Two actions rather than one because this is the only mail in the app a staff
+   member is asked to approve before it leaves. A payment link is a request for
+   money with a recurrence attached, so "what exactly is the client about to
+   read?" is a fair question to be able to answer without sending it to yourself
+   first. The preview renders the real template from the real row; pressing Send
+   builds it again the same way, so what was approved is what goes.
+
+   The line is read back from the database in both, never taken from the form.
+   The browser knows the URL and the amount, but a request for money decides
+   where it goes and what it says server-side or not at all.
+--------------------------------------------------------------------------- */
+
+/** The shared two-step shape — see lib/email/flow.ts. */
+export type PaymentEmailState = EmailFlowState;
+
+/** The rate said in words. "$44/yr" is fine on screen; an inbox deserves more. */
+function recurrenceSentence(interval: BillingInterval, termCount: number): string {
+  if (interval === "one_off") return "A one-off charge — it won't repeat.";
+  const term = formatTerm(interval, termCount);
+  return termCount > 1
+    ? `Charged every ${term}, until you tell us to stop.`
+    : `Charged every ${INTERVAL_NOUN[interval]}, until you tell us to stop.`;
+}
+
+/** Build the mail for a line. Shared, so preview and send cannot disagree. */
+async function composePaymentLinkEmail(clientServiceId: string) {
+  const line = await getPaymentLinkRecipient(clientServiceId);
+  const mail = paymentLinkEmail({
+    clientName: line.clientName,
+    label: line.label,
+    rate: formatRate(line.amountCents, line.currency, line.interval, line.termCount),
+    recurrence: recurrenceSentence(line.interval, line.termCount),
+    url: line.url,
+    simulated: line.simulated,
+  });
+  return { line, mail };
+}
+
+function mapPaymentEmailError(error: unknown): string {
+  if (error instanceof Error) {
+    switch (error.message) {
+      case "NO_LINK":
+        return "There's no payment link on this line yet. Create one first.";
+      case "NO_EMAIL":
+        return "This client has no email address. Add one first.";
+    }
+  }
+  return mapError(error);
+}
+
+export async function previewPaymentLinkEmailAction(
+  _prev: PaymentEmailState,
+  formData: FormData,
+): Promise<PaymentEmailState> {
+  const parsed = clientServiceIdSchema.safeParse({
+    clientServiceId: formData.get("clientServiceId"),
+  });
+  if (!parsed.success) return fail("That billing line couldn't be found.");
+
+  try {
+    await requireSession();
+    const { line, mail } = await composePaymentLinkEmail(parsed.data.clientServiceId);
+    return {
+      ok: true,
+      error: null,
+      preview: { to: line.clientEmail, subject: mail.subject, html: mail.html },
+    };
+  } catch (error) {
+    console.error("[previewPaymentLinkEmailAction]", error);
+    return fail(mapPaymentEmailError(error));
+  }
+}
+
+export async function emailPaymentLinkAction(
+  _prev: PaymentEmailState,
+  formData: FormData,
+): Promise<PaymentEmailState> {
+  const parsed = clientServiceIdSchema.safeParse({
+    clientServiceId: formData.get("clientServiceId"),
+  });
+  if (!parsed.success) return fail("That billing line couldn't be found.");
+
+  try {
+    await requireSession();
+    const { line, mail } = await composePaymentLinkEmail(parsed.data.clientServiceId);
+
+    const result = await sendMail({
+      to: line.clientEmail,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
+    });
+
+    if (!result.sent) {
+      return {
+        ok: false,
+        error: null,
+        delivery: { sent: false, to: line.clientEmail, reason: result.reason },
+      };
+    }
+
+    await logActivity({
+      actorType: "staff",
+      entityType: "client",
+      entityId: line.clientId,
+      action: "payment.link_emailed",
+      metadata: { clientServiceId: parsed.data.clientServiceId, to: line.clientEmail },
+    });
+
+    revalidatePath(`/admin/clients/${line.clientId}`);
+    return { ok: true, error: null, delivery: { sent: true, to: line.clientEmail } };
+  } catch (error) {
+    console.error("[emailPaymentLinkAction]", error);
+    return fail(mapPaymentEmailError(error));
   }
 }

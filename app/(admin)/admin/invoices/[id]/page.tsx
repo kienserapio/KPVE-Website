@@ -58,9 +58,6 @@ export default async function InvoiceDetailPage({
         publicToken={invoice.publicToken}
         billToEmail={invoice.billToEmail}
         number={invoice.number}
-        totalCents={invoice.totalCents}
-        currency={invoice.currency}
-        dueDate={invoice.dueDate}
         coverMonths={invoice.coverMonths}
         durationLines={invoice.lines.map((line) => ({
           id: line.id,

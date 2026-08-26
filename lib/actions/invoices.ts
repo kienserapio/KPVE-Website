@@ -6,7 +6,8 @@ import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/dal/session";
 import { logActivity } from "@/lib/dal/activity";
 import { sendMail } from "@/lib/email";
-import { invoiceEmail } from "@/lib/email/templates";
+import { invoiceEmail, type Email } from "@/lib/email/templates";
+import type { EmailFlowState } from "@/lib/email/flow";
 import { appUrl, formatDate } from "@/lib/utils";
 import {
   createInvoiceFromServices,
@@ -17,6 +18,7 @@ import {
   setInvoiceStatus,
   updateInvoice,
   voidAndDeleteInvoice,
+  type InvoiceDetail,
 } from "@/lib/dal/invoices";
 import {
   billTermSchema,
@@ -364,17 +366,89 @@ async function removeInvoice(
    offers the old mailto: hand-off in its place.
 --------------------------------------------------------------------------- */
 
-export type InvoiceEmailState = {
-  ok: boolean;
-  error: string | null;
-  /** Present once a send has been attempted. */
-  delivery?: {
-    sent: boolean;
-    to: string;
-    /** Only when `sent` is false. */
-    reason?: "not_configured" | "failed";
-  };
-};
+/** The shared two-step shape — see lib/email/flow.ts. */
+export type InvoiceEmailState = EmailFlowState;
+
+/**
+ * Read the invoice and build its mail. Shared by the preview and the send so
+ * the two cannot drift: what was approved on screen is what goes out.
+ *
+ * Returns a refusal instead of the mail when the invoice can't be emailed at
+ * all, so both entry points give the same answer to the same question.
+ */
+async function composeInvoiceEmail(
+  invoiceId: string,
+): Promise<{ error: string } | { to: string; mail: Email; invoice: InvoiceDetail }> {
+  const invoice = await getInvoice(invoiceId);
+
+  if (!invoice) return { error: "That invoice no longer exists." };
+
+  // A draft has no live client link — getInvoiceByToken refuses one — so
+  // emailing it would send a URL that 404s. Send it first, then email it.
+  if (invoice.status === "draft") {
+    return { error: "Send the invoice first — a draft has no client link yet." };
+  }
+  if (invoice.status === "void") {
+    return { error: "A voided invoice can't be emailed. Raise a new one instead." };
+  }
+  if (!invoice.billToEmail) {
+    return { error: "No billing email on this invoice. Add one to the client first." };
+  }
+
+  const mail = invoiceEmail({
+    clientName: invoice.billToName,
+    number: invoice.number,
+    status: invoice.status,
+    dueDate: invoice.dueDate,
+    currency: invoice.currency,
+    subtotalCents: invoice.subtotalCents,
+    taxCents: invoice.taxCents,
+    totalCents: invoice.totalCents,
+    amountPaidCents: invoice.amountPaidCents,
+    taxRateBps: invoice.taxRateBps,
+    taxMode: invoice.taxMode,
+    poNumber: invoice.poNumber,
+    lines: invoice.lines.map((line) => ({
+      label: line.label,
+      period: periodLabel(line.periodStart, line.periodEnd),
+      amountCents: line.amountCents,
+    })),
+    payUrl: `${appUrl()}/invoice/${invoice.publicToken}`,
+    payable: invoice.payable,
+    bankDetails: {
+      bankName: invoice.bankDetails.bankName,
+      bsb: invoice.bankDetails.bsb,
+      accountName: invoice.bankDetails.accountName,
+      accountNumber: invoice.bankDetails.accountNumber,
+    },
+  });
+
+  return { to: invoice.billToEmail, mail, invoice };
+}
+
+/** Render it and hand it back. Sends nothing — this is the confirm step. */
+export async function previewInvoiceEmailAction(
+  _prev: InvoiceEmailState,
+  formData: FormData,
+): Promise<InvoiceEmailState> {
+  const parsed = invoiceIdSchema.safeParse({ invoiceId: formData.get("invoiceId") });
+  if (!parsed.success) return fail("That invoice couldn't be found.");
+
+  try {
+    await requireSession();
+    const built = await composeInvoiceEmail(parsed.data.invoiceId);
+    if ("error" in built) return fail(built.error);
+
+    return {
+      ok: true,
+      error: null,
+      preview: { to: built.to, subject: built.mail.subject, html: built.mail.html },
+    };
+  } catch (error) {
+    console.error("[previewInvoiceEmailAction]", error);
+    return fail(mapError(error));
+  }
+}
 
 export async function emailInvoiceAction(
   _prev: InvoiceEmailState,
@@ -386,66 +460,23 @@ export async function emailInvoiceAction(
 
   try {
     await requireSession();
-    const invoice = await getInvoice(parsed.data.invoiceId);
+    const built = await composeInvoiceEmail(parsed.data.invoiceId);
+    if ("error" in built) return fail(built.error);
 
-    if (!invoice) return fail("That invoice no longer exists.");
-
-    // A draft has no live client link — getInvoiceByToken refuses one — so
-    // emailing it would send a URL that 404s. Send it first, then email it.
-    if (invoice.status === "draft") {
-      return fail("Send the invoice first — a draft has no client link yet.");
-    }
-    if (invoice.status === "void") {
-      return fail("A voided invoice can't be emailed. Raise a new one instead.");
-    }
-    if (!invoice.billToEmail) {
-      return fail("No billing email on this invoice. Add one to the client first.");
-    }
-
-    const { subject, text, html } = invoiceEmail({
-      clientName: invoice.billToName,
-      number: invoice.number,
-      status: invoice.status,
-      dueDate: invoice.dueDate,
-      currency: invoice.currency,
-      subtotalCents: invoice.subtotalCents,
-      taxCents: invoice.taxCents,
-      totalCents: invoice.totalCents,
-      amountPaidCents: invoice.amountPaidCents,
-      taxRateBps: invoice.taxRateBps,
-      taxMode: invoice.taxMode,
-      poNumber: invoice.poNumber,
-      lines: invoice.lines.map((line) => ({
-        label: line.label,
-        period: periodLabel(line.periodStart, line.periodEnd),
-        amountCents: line.amountCents,
-      })),
-      payUrl: `${appUrl()}/invoice/${invoice.publicToken}`,
-      payable: invoice.payable,
-      bankDetails: {
-        bankName: invoice.bankDetails.bankName,
-        bsb: invoice.bankDetails.bsb,
-        accountName: invoice.bankDetails.accountName,
-        accountNumber: invoice.bankDetails.accountNumber,
-      },
-    });
+    const { to, mail, invoice } = built;
 
     const result = await sendMail({
-      to: invoice.billToEmail,
-      subject,
-      text,
-      html,
+      to,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
       // Replies go to the business, not to the outgoing mailbox — "if anything
       // looks wrong, reply to this email" is only true if someone reads it.
       replyTo: invoice.sellerEmail ?? undefined,
     });
 
     if (!result.sent) {
-      return {
-        ok: false,
-        error: null,
-        delivery: { sent: false, to: invoice.billToEmail, reason: result.reason },
-      };
+      return { ok: false, error: null, delivery: { sent: false, to, reason: result.reason } };
     }
 
     await logActivity({
@@ -453,10 +484,10 @@ export async function emailInvoiceAction(
       entityType: "invoice",
       entityId: invoice.id,
       action: "invoice.emailed",
-      metadata: { number: invoice.number, to: invoice.billToEmail },
+      metadata: { number: invoice.number, to },
     });
 
-    return { ok: true, error: null, delivery: { sent: true, to: invoice.billToEmail } };
+    return { ok: true, error: null, delivery: { sent: true, to } };
   } catch (error) {
     console.error("[emailInvoiceAction]", error);
     return fail(mapError(error));

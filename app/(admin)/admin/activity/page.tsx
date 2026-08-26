@@ -24,6 +24,7 @@ const ACTION_LABELS: Record<string, string> = {
   "client_service.item_removed": "Provisioned item removed",
   "payment.link_created": "Payment link created",
   "payment.link_revoked": "Payment link revoked",
+  "payment.link_emailed": "Payment link emailed to client",
   "payment.succeeded": "Payment received",
   "payment.failed": "Payment failed",
   "payment.subscription_cancelled": "Subscription cancelled at the provider",

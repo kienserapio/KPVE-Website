@@ -250,8 +250,6 @@ export default async function ClientDetailPage({
             <div className="mt-5">
               <ClientServices
                 clientId={client.id}
-                clientName={client.name}
-                clientEmail={client.email}
                 services={client.services}
                 catalogue={catalogue}
               />

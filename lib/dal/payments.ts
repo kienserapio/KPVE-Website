@@ -273,6 +273,72 @@ export async function createInvoiceCheckout(invoiceId: string): Promise<Checkout
   };
 }
 
+/**
+ * Everything the payment-link email needs, read back from the line itself.
+ *
+ * A separate read rather than trusting what the browser holds: the URL, the
+ * amount and the address the mail goes to are all things the client component
+ * could hand over, and none of them should be taken from it. The link is a
+ * request for money — where it goes and what it says is decided here.
+ */
+export type PaymentLinkRecipient = {
+  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  label: string;
+  amountCents: number;
+  currency: string;
+  interval: BillingInterval;
+  termCount: number;
+  url: string;
+  simulated: boolean;
+};
+
+export async function getPaymentLinkRecipient(
+  clientServiceId: string,
+): Promise<PaymentLinkRecipient> {
+  await requireSession();
+
+  const [row] = await db
+    .select({
+      clientId: clientServices.clientId,
+      clientName: clients.name,
+      clientEmail: clients.email,
+      label: clientServices.label,
+      amountCents: clientServices.amountCents,
+      currency: clientServices.currency,
+      interval: clientServices.interval,
+      termCount: clientServices.termCount,
+      status: clientServices.status,
+      url: clientServices.checkoutUrl,
+      provider: clientServices.paymentProvider,
+    })
+    .from(clientServices)
+    .innerJoin(clients, eq(clientServices.clientId, clients.id))
+    .where(eq(clientServices.id, clientServiceId))
+    .limit(1);
+
+  if (!row) throw new Error("NOT_FOUND");
+  // No link means there is nothing to send. Mint one first.
+  if (!row.url) throw new Error("NO_LINK");
+  if (row.status === "cancelled") throw new Error("LINE_CANCELLED");
+  if (!row.clientEmail) throw new Error("NO_EMAIL");
+
+  return {
+    clientId: row.clientId,
+    clientName: row.clientName,
+    clientEmail: row.clientEmail,
+    label: row.label,
+    amountCents: row.amountCents,
+    currency: row.currency,
+    interval: row.interval,
+    termCount: row.termCount,
+    url: row.url,
+    // Same rule the panel uses: anything that isn't Stripe is the simulator.
+    simulated: row.provider !== "stripe",
+  };
+}
+
 /** Drop the outstanding link without touching the line's money or status. */
 export async function clearCheckout(clientServiceId: string): Promise<{ clientId: string }> {
   const staff = await requireSession();

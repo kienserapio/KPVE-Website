@@ -5,16 +5,16 @@ import { useActionState, useState, type ReactNode } from "react";
 import {
   deleteInvoiceAction,
   emailInvoiceAction,
+  previewInvoiceEmailAction,
   resyncInvoiceAction,
   setInvoiceDurationAction,
   setInvoiceStatusAction,
   voidAndDeleteInvoiceAction,
   type InvoiceActionState,
-  type InvoiceEmailState,
 } from "@/lib/actions/invoices";
+import { EmailItControl } from "./EmailItControl";
 import type { InvoiceStatus } from "@/lib/db/schema";
-import { formatDuration, formatMoney } from "@/lib/billing";
-import { formatDate } from "@/lib/utils";
+import { formatDuration } from "@/lib/billing";
 import { AdminButton } from "./ui";
 import {
   DurationBreakdown,
@@ -38,17 +38,12 @@ import {
 const secondaryClass =
   "inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface)] px-4 py-2.5 text-sm font-medium text-[var(--admin-fg)] transition hover:bg-[var(--admin-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--admin-accent)]/50";
 
-const emailInitial: InvoiceEmailState = { ok: false, error: null };
-
 export function InvoiceActions({
   status,
   invoiceId,
   publicToken,
   billToEmail,
   number,
-  totalCents,
-  currency,
-  dueDate,
   coverMonths,
   durationLines,
   staleFields = [],
@@ -58,9 +53,6 @@ export function InvoiceActions({
   publicToken: string;
   billToEmail: string | null;
   number: string;
-  totalCents: number;
-  currency: string;
-  dueDate: Date | null;
   /** Months billed up front, or null for one cycle per line. */
   coverMonths: number | null;
   /** The invoice's lines, so a draft can be re-priced with its total in view. */
@@ -78,11 +70,6 @@ export function InvoiceActions({
   // The PDF preview is the actual generated file, embedded — so staff see exactly
   // what the client downloads, not just the HTML approximation below it.
   const [previewing, setPreviewing] = useState(false);
-  // "Email it" is a real send now, so it has a real result to report.
-  const [emailState, emailAction, emailPending] = useActionState(
-    emailInvoiceAction,
-    emailInitial,
-  );
 
   // The origin is only knowable in the browser; reading it during render would
   // mismatch the server HTML. So both share-actions build the absolute link at
@@ -97,24 +84,6 @@ export function InvoiceActions({
     } catch {
       // Clipboard is blocked on insecure origins; the link is also on the page.
     }
-  }
-
-  // The hand-off that used to BE this button, kept for the one case the server
-  // can't cover: no mail server configured, or the send failed. Only offered
-  // once that has actually happened — see the delivery line below the bar.
-  function composeItYourself() {
-    if (!billToEmail) return;
-    const dueLabel = dueDate ? formatDate(dueDate) : null;
-    const body =
-      `Hi,\n\n` +
-      `Here's invoice ${number} for ${formatMoney(totalCents, currency)}` +
-      `${dueLabel ? `, due ${dueLabel}` : ""}.\n\n` +
-      `View and pay it here:\n${clientLink()}\n\n` +
-      `Thanks,\nKPVE`;
-    window.location.href =
-      `mailto:${encodeURIComponent(billToEmail)}` +
-      `?subject=${encodeURIComponent(`Invoice ${number}`)}` +
-      `&body=${encodeURIComponent(body)}`;
   }
 
   const isStale = status === "draft" && staleFields.length > 0;
@@ -239,16 +208,13 @@ export function InvoiceActions({
             {/* Not offered on a draft: the client link only goes live at Send,
                 so an emailed draft would carry a URL that 404s. */}
             {billToEmail && status !== "draft" && (
-              <form action={emailAction} className="inline-flex">
-                <input type="hidden" name="invoiceId" value={invoiceId} />
-                <button type="submit" disabled={emailPending} className={secondaryClass}>
-                  {emailPending
-                    ? "Sending…"
-                    : emailState.delivery?.sent
-                      ? "Send again"
-                      : "Email it"}
-                </button>
-              </form>
+              <EmailItControl
+                previewAction={previewInvoiceEmailAction}
+                sendAction={emailInvoiceAction}
+                fields={{ invoiceId }}
+                className={secondaryClass}
+                describes={`invoice ${number}`}
+              />
             )}
 
             {/* PDF controls pushed to the far right of the bar — ml-auto opens the
@@ -274,39 +240,6 @@ export function InvoiceActions({
           </>
         )}
       </div>
-
-      {/* What became of the send. Sits under the bar rather than in it, because
-          the failure case needs a sentence and an escape hatch, not a label. */}
-      {(emailState.error || emailState.delivery) && (
-        <p
-          role="status"
-          className={`text-xs leading-relaxed ${
-            emailState.delivery?.sent
-              ? "text-[var(--admin-fg-muted)]"
-              : "text-[var(--admin-warning,#c2853a)]"
-          }`}
-        >
-          {emailState.error ? (
-            emailState.error
-          ) : emailState.delivery?.sent ? (
-            `Emailed to ${emailState.delivery.to}.`
-          ) : (
-            <>
-              {emailState.delivery?.reason === "not_configured"
-                ? "Not emailed — no mail server is configured here."
-                : "Couldn't email it just then."}{" "}
-              <button
-                type="button"
-                onClick={composeItYourself}
-                className="underline underline-offset-2 hover:text-[var(--admin-fg)]"
-              >
-                Compose it in your mail app
-              </button>
-              , or try again.
-            </>
-          )}
-        </p>
-      )}
 
       {/* The generated PDF, embedded on the page — exactly the file that
           downloads and that the client receives. */}
