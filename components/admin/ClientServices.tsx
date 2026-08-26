@@ -17,7 +17,12 @@ import {
   revokePaymentLinkAction,
   type PaymentActionState,
 } from "@/lib/actions/payments";
-import { billTermAction, type BillTermState } from "@/lib/actions/invoices";
+import {
+  billTermAction,
+  emailInvoiceAction,
+  type BillTermState,
+  type InvoiceEmailState,
+} from "@/lib/actions/invoices";
 import type { ClientServiceItem, ServiceItem } from "@/lib/dal/services";
 import {
   BILLING_INTERVALS,
@@ -724,6 +729,7 @@ function PaymentLink({
 --------------------------------------------------------------------------- */
 
 const billTermInitialState: BillTermState = { ok: false, error: null };
+const emailInitialState: InvoiceEmailState = { ok: false, error: null };
 
 function BillTerm({
   line,
@@ -745,6 +751,12 @@ function BillTerm({
   // A term of one cycle is what the subscription link already does, so this
   // opens on a year — the shortest span anyone comes here to bill.
   const [months, setMonths] = useState<number | null>(12);
+  // The invoice this panel just issued is a real invoice, so emailing it is the
+  // same server-side send the invoice page does — not a mailto: hand-off.
+  const [emailState, emailAction, emailPending] = useActionState(
+    emailInvoiceAction,
+    emailInitialState,
+  );
 
   // A one-off has no cycle to multiply; "bill it twice" is not a duration, it's
   // a second sale. Cancelled lines aren't billed at all.
@@ -781,7 +793,8 @@ function BillTerm({
       }
     }
 
-    function emailIt() {
+    // Only reached when the server couldn't send — see the delivery line below.
+    function composeItYourself() {
       const body =
         `Hi ${clientName.split(" ")[0] || "there"},\n\n` +
         `Here's invoice ${issued!.number} for ${line.label} — ` +
@@ -815,13 +828,20 @@ function BillTerm({
           >
             {copied ? "Copied" : "Copy link"}
           </button>
-          <button
-            type="button"
-            onClick={emailIt}
-            className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface)] hover:text-[var(--admin-fg)]"
-          >
-            Email it
-          </button>
+          <form action={emailAction} className="inline-flex">
+            <input type="hidden" name="invoiceId" value={issued.id} />
+            <button
+              type="submit"
+              disabled={emailPending}
+              className="rounded-lg border border-[var(--admin-border-strong)] px-2.5 py-1.5 text-xs font-medium text-[var(--admin-fg-muted)] transition hover:bg-[var(--admin-surface)] hover:text-[var(--admin-fg)]"
+            >
+              {emailPending
+                ? "Sending…"
+                : emailState.delivery?.sent
+                  ? "Send again"
+                  : "Email it"}
+            </button>
+          </form>
           <a
             href={`/admin/invoices/${issued.id}`}
             className="rounded-lg px-2 py-1.5 text-xs text-[var(--admin-fg-subtle)] transition hover:text-[var(--admin-fg)]"
@@ -829,6 +849,39 @@ function BillTerm({
             Open invoice
           </a>
         </div>
+
+        {/* What became of the send. Only the failure case needs the mailto:
+            escape hatch, so it is the only case that offers one. */}
+        {(emailState.error || emailState.delivery) && (
+          <p
+            role="status"
+            className={`text-[11px] leading-relaxed ${
+              emailState.delivery?.sent
+                ? "text-[var(--admin-fg-muted)]"
+                : "text-[var(--admin-warning,#c2853a)]"
+            }`}
+          >
+            {emailState.error ? (
+              emailState.error
+            ) : emailState.delivery?.sent ? (
+              `Emailed to ${emailState.delivery.to}.`
+            ) : (
+              <>
+                {emailState.delivery?.reason === "not_configured"
+                  ? "Not emailed — no mail server is configured here."
+                  : "Couldn't email it just then."}{" "}
+                <button
+                  type="button"
+                  onClick={composeItYourself}
+                  className="underline underline-offset-2 hover:text-[var(--admin-fg)]"
+                >
+                  Compose it in your mail app
+                </button>
+                , or try again.
+              </>
+            )}
+          </p>
+        )}
 
         <p className="text-[11px] text-[var(--admin-fg-subtle)]">
           The client sees the invoice and pays the whole{" "}
