@@ -213,7 +213,8 @@ export type PaymentEmailState = EmailFlowState;
 
 /** The rate said in words. "$44/yr" is fine on screen; an inbox deserves more. */
 function recurrenceSentence(interval: BillingInterval, termCount: number): string {
-  if (interval === "one_off") return "A one-off charge — it won't repeat.";
+  // No dash in these: the rate is printed right before them with one already.
+  if (interval === "one_off") return "A one-off charge that won't repeat.";
   const term = formatTerm(interval, termCount);
   return termCount > 1
     ? `Charged every ${term}, until you tell us to stop.`
@@ -228,6 +229,7 @@ async function composePaymentLinkEmail(clientServiceId: string) {
     label: line.label,
     rate: formatRate(line.amountCents, line.currency, line.interval, line.termCount),
     recurrence: recurrenceSentence(line.interval, line.termCount),
+    note: line.note,
     url: line.url,
     simulated: line.simulated,
   });

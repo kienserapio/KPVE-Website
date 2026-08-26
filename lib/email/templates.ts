@@ -932,6 +932,12 @@ export function paymentLinkEmail(input: {
   rate: string;
   /** Said in words, because a recurring charge should never be a surprise. */
   recurrence: string;
+  /**
+   * The note staff wrote on the billing line — "$80 each with two years
+   * registration". It is the sentence that explains a figure the client would
+   * otherwise have to take on trust, so it travels with the amount.
+   */
+  note: string | null;
   url: string;
   /** A test link. Says so, loudly — never let one read as a real request. */
   simulated: boolean;
@@ -958,6 +964,7 @@ export function paymentLinkEmail(input: {
     "WHAT YOU'RE SETTING UP",
     `  ${input.label}`,
     `  ${input.rate} — ${input.recurrence}`,
+    ...(input.note ? input.note.split(/\r?\n/).map((row) => `  ${row}`) : []),
     "",
     "TO SET IT UP",
     `  ${input.url}`,
@@ -999,6 +1006,11 @@ export function paymentLinkEmail(input: {
          <p style="margin:0 0 10px;font-family:${SANS};font-size:16px;font-weight:700;color:${WHITE};">${escapeHtml(input.label)}</p>
          <p style="margin:0 0 3px;font-family:${MONO};font-size:22px;font-weight:700;color:${GOLD_CREAM};">${escapeHtml(input.rate)}</p>
          <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.55;color:${MUTED_3};">${escapeHtml(input.recurrence)}</p>
+         ${
+           input.note
+             ? `<p style="margin:12px 0 0;padding:12px 0 0;border-top:1px solid ${LINE_3};font-family:${SANS};font-size:13px;line-height:1.6;color:${MUTED_3};">${escapeLines(input.note)}</p>`
+             : ""
+         }
        </td></tr>
      </table>
 

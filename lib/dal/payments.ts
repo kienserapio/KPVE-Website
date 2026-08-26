@@ -290,6 +290,8 @@ export type PaymentLinkRecipient = {
   currency: string;
   interval: BillingInterval;
   termCount: number;
+  /** The staff note on the line, as shown beside it in the dashboard. */
+  note: string | null;
   url: string;
   simulated: boolean;
 };
@@ -309,6 +311,7 @@ export async function getPaymentLinkRecipient(
       currency: clientServices.currency,
       interval: clientServices.interval,
       termCount: clientServices.termCount,
+      notes: clientServices.notes,
       status: clientServices.status,
       url: clientServices.checkoutUrl,
       provider: clientServices.paymentProvider,
@@ -333,6 +336,8 @@ export async function getPaymentLinkRecipient(
     currency: row.currency,
     interval: row.interval,
     termCount: row.termCount,
+    // Blank notes are stored as "" rather than null — treat both as absent.
+    note: row.notes?.trim() ? row.notes : null,
     url: row.url,
     // Same rule the panel uses: anything that isn't Stripe is the simulator.
     simulated: row.provider !== "stripe",
