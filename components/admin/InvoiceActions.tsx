@@ -5,6 +5,7 @@ import { useActionState, useState, type ReactNode } from "react";
 import {
   deleteInvoiceAction,
   emailInvoiceAction,
+  issueInvoiceAndPreviewEmailAction,
   previewInvoiceEmailAction,
   resyncInvoiceAction,
   setInvoiceDurationAction,
@@ -34,6 +35,9 @@ import {
    DAL enforces the same rules, so a stale button can't do anything the model
    forbids.
 --------------------------------------------------------------------------- */
+
+const primaryClass =
+  "inline-flex items-center justify-center gap-2 rounded-lg bg-[var(--admin-accent)] px-4 py-2.5 text-sm font-medium text-[var(--admin-accent-fg)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--admin-accent)]/50 disabled:pointer-events-none disabled:opacity-55";
 
 const secondaryClass =
   "inline-flex items-center justify-center gap-2 rounded-lg border border-[var(--admin-border-strong)] bg-[var(--admin-surface)] px-4 py-2.5 text-sm font-medium text-[var(--admin-fg)] transition hover:bg-[var(--admin-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--admin-accent)]/50";
@@ -124,11 +128,17 @@ export function InvoiceActions({
 
       <div className="flex flex-wrap items-center gap-2">
         {/* Status-driven primary actions. */}
+        {/* Issuing lives in the shared block below, so the email panel it opens
+            isn't torn down the moment the status flips to "sent". Without an
+            address there is nothing to email, so that case keeps a plain
+            issue button. */}
         {status === "draft" && (
           <>
-            <StatusForm invoiceId={invoiceId} status="sent">
-              <AdminButton type="submit">Send</AdminButton>
-            </StatusForm>
+            {!billToEmail && (
+              <StatusForm invoiceId={invoiceId} status="sent">
+                <AdminButton type="submit">Issue invoice</AdminButton>
+              </StatusForm>
+            )}
             <DeleteControl
               invoiceId={invoiceId}
               label="Delete draft"
@@ -199,23 +209,32 @@ export function InvoiceActions({
         {/* Sharing + print — for every live state, but not for a void record. */}
         {status !== "void" && (
           <>
+            {/* Rendered here, outside the status branches, and FIRST: React
+                keeps a component's state only while it stays in the same
+                position, and issuing flips the status underneath it. Inside a
+                `status === "draft"` branch this control would unmount at the
+                moment it had something to show. */}
+            {billToEmail && (
+              <EmailItControl
+                previewAction={
+                  status === "draft"
+                    ? issueInvoiceAndPreviewEmailAction
+                    : previewInvoiceEmailAction
+                }
+                sendAction={emailInvoiceAction}
+                fields={{ invoiceId }}
+                className={status === "draft" ? primaryClass : secondaryClass}
+                label={status === "draft" ? "Issue & email" : "Email it"}
+                cancelLabel={status === "draft" ? "Not yet" : "Cancel"}
+                describes={`invoice ${number}`}
+              />
+            )}
             <button type="button" onClick={() => window.print()} className={secondaryClass}>
               Print
             </button>
             <button type="button" onClick={copyLink} className={secondaryClass}>
               {copied ? "Copied" : "Copy client link"}
             </button>
-            {/* Not offered on a draft: the client link only goes live at Send,
-                so an emailed draft would carry a URL that 404s. */}
-            {billToEmail && status !== "draft" && (
-              <EmailItControl
-                previewAction={previewInvoiceEmailAction}
-                sendAction={emailInvoiceAction}
-                fields={{ invoiceId }}
-                className={secondaryClass}
-                describes={`invoice ${number}`}
-              />
-            )}
 
             {/* PDF controls pushed to the far right of the bar — ml-auto opens the
                 gap so the document actions sit apart from send/share. */}
@@ -256,10 +275,10 @@ export function InvoiceActions({
           reissuing — which is how invoices work everywhere. */}
       <p className="text-xs text-[var(--admin-fg-subtle)]">
         {status === "draft"
-          ? "This is a draft — edit or delete it freely. The client link goes live once you send it."
+          ? "This is a draft — edit or delete it freely. Issue & email makes the client link live and then offers the email; nothing reaches the client until you send that."
           : status === "void"
             ? "This invoice is void. A voided invoice is a closed record; raise a new one if needed, or delete it to take it off the list for good."
-            : "A sent invoice can't be edited — only voided and reissued."}
+            : "A sent invoice can't be edited — only voided and reissued. Issuing is not emailing: press Email it to actually send it to the client."}
       </p>
     </div>
   );

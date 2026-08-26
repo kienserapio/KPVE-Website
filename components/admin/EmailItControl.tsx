@@ -39,6 +39,8 @@ export function EmailItControl({
   fields,
   className,
   label = "Email it",
+  /** The wording that backs out. "Not yet" fits a step that already did work. */
+  cancelLabel = "Cancel",
   /** What the mail is, for the panel's heading. "invoice INV-0042" reads well. */
   describes,
 }: {
@@ -48,6 +50,7 @@ export function EmailItControl({
   fields: Record<string, string>;
   className: string;
   label?: string;
+  cancelLabel?: string;
   describes: string;
 }) {
   const [preview, previewFormAction, previewPending] = useActionState(
@@ -132,10 +135,13 @@ export function EmailItControl({
               onClick={() => setDismissed(true)}
               className="text-xs text-[var(--admin-fg-muted)] transition hover:text-[var(--admin-fg)]"
             >
-              Cancel
+              {cancelLabel}
             </button>
+            {/* True whichever action opened this panel: issuing an invoice is
+                not emailing it, and that is the confusion this whole flow
+                exists to end. */}
             <p className="text-[11px] text-[var(--admin-fg-subtle)]">
-              Nothing has been sent yet.
+              Nothing has been emailed yet.
             </p>
           </div>
 

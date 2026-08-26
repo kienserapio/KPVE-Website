@@ -433,6 +433,57 @@ async function composeInvoiceEmail(
   return { to: invoice.billToEmail, mail, invoice };
 }
 
+/**
+ * Issue a draft, then hand back its email for approval — one press.
+ *
+ * "Send" used to mean only "move this from draft to sent", which makes the
+ * client link live and is a real and necessary step. It also read, to every
+ * staff member who ever pressed it, as "send this to the client" — and it has
+ * never emailed anybody. Invoices were issued, marked paid, and the client
+ * heard nothing.
+ *
+ * So issuing now ends where staff already thought it ended: at the email, with
+ * the mail on screen waiting for a second press. Cancelling leaves the invoice
+ * issued and unsent, which is a legitimate place to stop — the panel says so
+ * rather than implying the client has been told.
+ */
+export async function issueInvoiceAndPreviewEmailAction(
+  _prev: InvoiceEmailState,
+  formData: FormData,
+): Promise<InvoiceEmailState> {
+  const parsed = invoiceIdSchema.safeParse({ invoiceId: formData.get("invoiceId") });
+  if (!parsed.success) return fail("That invoice couldn't be found.");
+
+  try {
+    await requireSession();
+    const current = await getInvoice(parsed.data.invoiceId);
+    if (!current) return fail("That invoice no longer exists.");
+
+    // Only a draft needs issuing. A second press — or a stale button — must not
+    // try to re-issue something already sent, so this is a no-op by then.
+    if (current.status === "draft") {
+      const { clientId } = await setInvoiceStatus(parsed.data.invoiceId, "sent");
+      revalidatePath(`/admin/invoices/${parsed.data.invoiceId}`);
+      revalidatePath("/admin/invoices");
+      revalidatePath(`/admin/clients/${clientId}`);
+    }
+
+    // Re-read: issuing resyncs a stale draft, so the mail must be built from
+    // what the invoice became, not from what it was a moment ago.
+    const built = await composeInvoiceEmail(parsed.data.invoiceId);
+    if ("error" in built) return fail(built.error);
+
+    return {
+      ok: true,
+      error: null,
+      preview: { to: built.to, subject: built.mail.subject, html: built.mail.html },
+    };
+  } catch (error) {
+    console.error("[issueInvoiceAndPreviewEmailAction]", error);
+    return fail(mapError(error));
+  }
+}
+
 /** Render it and hand it back. Sends nothing — this is the confirm step. */
 export async function previewInvoiceEmailAction(
   _prev: InvoiceEmailState,
