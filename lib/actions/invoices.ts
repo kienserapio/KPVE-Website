@@ -13,6 +13,7 @@ import {
   createInvoiceFromServices,
   deleteInvoice,
   getInvoice,
+  issueAndMarkInvoicePaid,
   resyncDraftInvoice,
   setInvoiceDuration,
   setInvoiceStatus,
@@ -121,6 +122,27 @@ export async function setInvoiceStatusAction(formData: FormData): Promise<void> 
     revalidatePath(`/admin/clients/${clientId}`);
   } catch (error) {
     console.error("[setInvoiceStatusAction]", error);
+  }
+}
+
+/* Mark paid straight from a draft — for money that has already arrived.
+
+   A client on an automatic monthly debit has paid before the invoice is even
+   written, so the document is a receipt, not a request. The DAL still walks it
+   through "sent" on the way, so the resync-at-issue rule and the audit trail
+   are the ones the two-press route would have produced. */
+export async function issueAndMarkPaidAction(formData: FormData): Promise<void> {
+  const parsed = invoiceIdSchema.safeParse({ invoiceId: formData.get("invoiceId") });
+  if (!parsed.success) return;
+
+  try {
+    await requireSession();
+    const { clientId } = await issueAndMarkInvoicePaid(parsed.data.invoiceId);
+    revalidatePath(`/admin/invoices/${parsed.data.invoiceId}`);
+    revalidatePath("/admin/invoices");
+    revalidatePath(`/admin/clients/${clientId}`);
+  } catch (error) {
+    console.error("[issueAndMarkPaidAction]", error);
   }
 }
 

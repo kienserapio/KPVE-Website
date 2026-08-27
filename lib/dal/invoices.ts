@@ -1136,6 +1136,29 @@ export async function voidAndDeleteInvoice(id: string): Promise<{ clientId: stri
 }
 
 /* ---------------------------------------------------------------------------
+   Issue-and-mark-paid — the same two steps as before, in one press.
+
+   Money that arrived on its own is the case this exists for: a client whose
+   subscription debits itself every month has already paid by the time anyone
+   raises the invoice, so the document is a receipt from the moment it is
+   written. Walking it through "issue, reload, mark paid" is two page-loads to
+   record something that was never outstanding.
+
+   The transition table doesn't move for it: draft still goes to sent before it
+   goes to paid, which is what keeps the resync-at-issue rule — an ABN or a GST
+   change made after the draft was raised still reaches the document — and what
+   keeps sent_at meaning "this became a real invoice at this time". Both steps
+   log, so the trail reads exactly as the manual route would have left it. A
+   sent invoice takes the same press: setInvoiceStatus returns early on the step
+   it is already past.
+--------------------------------------------------------------------------- */
+
+export async function issueAndMarkInvoicePaid(id: string): Promise<{ clientId: string }> {
+  await setInvoiceStatus(id, "sent");
+  return setInvoiceStatus(id, "paid");
+}
+
+/* ---------------------------------------------------------------------------
    Reconciliation — called from applyPaymentSucceeded (lib/dal/payments.ts).
 
    Kept HERE, and importing nothing from payments.ts, so there is no import

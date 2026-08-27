@@ -5,6 +5,7 @@ import { useActionState, useState, type ReactNode } from "react";
 import {
   deleteInvoiceAction,
   emailInvoiceAction,
+  issueAndMarkPaidAction,
   issueInvoiceAndPreviewEmailAction,
   previewInvoiceEmailAction,
   resyncInvoiceAction,
@@ -229,6 +230,21 @@ export function InvoiceActions({
                 describes={`invoice ${number}`}
               />
             )}
+            {/* Money that arrived on its own — a client whose subscription
+                debits itself has already paid before this draft was written, so
+                the invoice is a receipt and there is nothing to email. Issuing
+                still happens underneath, so the number, the resync and the
+                trail are the ones the two-press route would have left. Sits
+                after the email control, never inside the draft branch, for the
+                position reason above. */}
+            {status === "draft" && (
+              <form action={issueAndMarkPaidAction} className="inline-flex">
+                <input type="hidden" name="invoiceId" value={invoiceId} />
+                <button type="submit" className={secondaryClass}>
+                  Mark paid
+                </button>
+              </form>
+            )}
             <button type="button" onClick={() => window.print()} className={secondaryClass}>
               Print
             </button>
@@ -275,7 +291,7 @@ export function InvoiceActions({
           reissuing — which is how invoices work everywhere. */}
       <p className="text-xs text-[var(--admin-fg-subtle)]">
         {status === "draft"
-          ? "This is a draft — edit or delete it freely. Issue & email makes the client link live and then offers the email; nothing reaches the client until you send that."
+          ? "This is a draft — edit or delete it freely. Issue & email makes the client link live and then offers the email; nothing reaches the client until you send that. Mark paid issues it and records it as settled in one step, for money that has already arrived — no email either way."
           : status === "void"
             ? "This invoice is void. A voided invoice is a closed record; raise a new one if needed, or delete it to take it off the list for good."
             : "A sent invoice can't be edited — only voided and reissued. Issuing is not emailing: press Email it to actually send it to the client."}
